@@ -1,6 +1,6 @@
-broker-url=dts-cn-hangzhou.aliyuncs.com:18001
-topic=cn_hangzhou_rm_bp11tv2923n87081s_rdsdt_dtsacct
-sid=dtshyye52491877bfk
-user=yanmen
-password=yanmen123
-checkpoint=1618199946
+broker-url=xxx
+topic=xxx
+sid=xxx
+user=xxx
+password=xxx
+checkpoint=xxx

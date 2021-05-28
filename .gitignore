@@ -2,3 +2,4 @@
 target
 .DS_Store
 flink-dts-demo.iml
+src/test/java/com/alibaba/blink/datastreaming/table/YanmenTableISelectTCaseTest.java

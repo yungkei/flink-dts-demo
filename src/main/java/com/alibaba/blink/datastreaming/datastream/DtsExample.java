@@ -1,6 +1,8 @@
 package com.alibaba.blink.datastreaming.datastream;
 
 import com.alibaba.flink.connectors.dts.FlinkDtsConsumer;
+import com.alibaba.flink.connectors.dts.FlinkDtsKafkaConsumer;
+import com.alibaba.flink.connectors.dts.FlinkDtsRawConsumer;
 import com.alibaba.flink.connectors.dts.formats.internal.record.DtsRecord;
 import com.alibaba.flink.connectors.dts.formats.internal.record.OperationType;
 import com.alibaba.flink.connectors.dts.formats.raw.DtsRecordDeserializationSchema;
@@ -32,10 +34,11 @@ public class DtsExample {
 
 
         DataStream input = env.addSource(
-                new FlinkDtsConsumer(
+                new FlinkDtsRawConsumer(
                         (String) properties.get("broker-url"),
                         (String) properties.get("topic"),
                         (String) properties.get("sid"),
+                        (String) properties.get("group"),
                         (String) properties.get("user"),
                         (String) properties.get("password"),
                         Integer.valueOf((String) properties.get("checkpoint")),
