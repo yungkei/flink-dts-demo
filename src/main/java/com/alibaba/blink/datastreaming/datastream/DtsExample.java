@@ -59,7 +59,7 @@ public class DtsExample {
                                 }
                             }
                         })
-                .rebalance();
+                ;
 
         input.addSink(new PrintSinkFunction<>()).setParallelism(1);
 
