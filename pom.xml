@@ -20,6 +20,11 @@
 
     <dependencies>
         <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+            <version>2.0.48</version>
+        </dependency>
+        <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-table-planner-blink_${scala.binary.version}</artifactId>
             <version>${flink.version}</version>
@@ -36,8 +41,14 @@
         <dependency>
             <groupId>com.alibaba.flink</groupId>
             <artifactId>flink-dts-connector</artifactId>
-            <version>1.1-SNAPSHOT</version>
+            <version>1.1.2-SNAPSHOT</version>
             <classifier>jar-with-dependencies</classifier>
+        </dependency>
+
+        <dependency>
+            <groupId>com.aliyun.dts</groupId>
+            <artifactId>dts-new-subscribe-sdk</artifactId>
+            <version>1.4.0</version>
         </dependency>
 
         <!--        Add logging framework-->
