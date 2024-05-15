@@ -1,13 +1,12 @@
 package com.alibaba.blink.datastreaming.datastream.canal;
 
 
+import com.alibaba.blink.datastreaming.datastream.action.AbstractDtsToKafkaFlinkAction;
+import com.alibaba.blink.datastreaming.datastream.action.RouteDef;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -56,22 +55,30 @@ public class CanalJsonUtils {
         typeMap.put(255, "GEOMETRY");
         // 添加其他类型映射...
     }
+
     public static void main(String[] args) {
         JSONObject jsonObject = JSON.parseObject("{\"version\": 0, \"id\": 1858644, \"sourceTimestamp\": 1712905965, \"sourcePosition\": \"2924526@143\", \"safeSourcePosition\": \"2924372@143\", \"sourceTxid\": \"0\", \"source\": {\"sourceType\": \"MySQL\", \"version\": \"8.0.34\"}, \"operation\": \"INSERT\", \"objectName\": \"test_drds_hzy_pyii_0005.sample_order_real_aeje_11\", \"processTimestamps\": null, \"tags\": {\"thread_id\": \"2533976\", \"readerThroughoutTime\": \"1712905965384\", \"l_tb_name\": \"sample_order_real\", \"pk_uk_info\": \"{\\\"PRIMARY\\\":[\\\"id\\\"]}\", \"metaVersion\": \"827452312\", \"server_id\": \"2814094928\", \"l_db_name\": \"test_drds_hzy\"}, \"fields\": [{\"name\": \"id\", \"dataTypeNumber\": 3}, {\"name\": \"seller_id\", \"dataTypeNumber\": 3}, {\"name\": \"trade_id\", \"dataTypeNumber\": 3}, {\"name\": \"buyer_id\", \"dataTypeNumber\": 3}, {\"name\": \"buyer_nick\", \"dataTypeNumber\": 253}], \"beforeImages\": null, \"afterImages\": [{\"precision\": 4, \"value\": \"10000\"}, {\"precision\": 4, \"value\": \"11\"}, {\"precision\": 4, \"value\": \"122\"}, {\"precision\": 4, \"value\": \"33\"}, {\"charset\": \"utf8mb3\", \"value\": \"aaas\"}]}");
         CanalJson convert = convert(jsonObject);
         System.out.println(JSON.toJSONString(convert));
     }
 
-    public static CanalJson convert( JSONObject dtsJsonObject)  {
+    public static CanalJson convert(JSONObject dtsJsonObject) {
+        return convert(dtsJsonObject, null);
+    }
+
+    public static CanalJson convert(JSONObject dtsJsonObject, List<RouteDef> routeDefs) {
 
 
         CanalJson canalJson = new CanalJson();
         canalJson.setType(dtsJsonObject.getString("operation")); // 假定 operation 字段即代表了 DTS 操作类型 UPDATE, INSERT 等
         canalJson.setId(dtsJsonObject.getLong("id"));
 
+
         // 将数据库和表名分割
-        String[] dbTableArray = dtsJsonObject.getString("objectName").split("\\.");
-        if(dbTableArray.length ==1) {
+        String dtsObjectName = dtsJsonObject.getString("objectName");
+        String dtsObjectNamePerformed = AbstractDtsToKafkaFlinkAction.convertTableNameIfMatched(routeDefs, dtsObjectName);
+        String[] dbTableArray = dtsObjectNamePerformed.split("\\.");
+        if (dbTableArray.length == 1) {
             canalJson.setDatabase(dbTableArray[0]);
         } else {
             canalJson.setDatabase(dbTableArray[0]);
@@ -89,14 +96,14 @@ public class CanalJsonUtils {
             // 需要一个键值对列表来表示之前的图像和之后的图像。
             List<Map<String, String>> oldList = new ArrayList<>();
             oldList.add(convertFieldMap(dtsJsonObject.getJSONObject("beforeImages")));
-            if(!"DELETE".equals(canalJson.getType())) {
+            if (!"DELETE".equals(canalJson.getType())) {
                 canalJson.setOld(oldList);
             }
 
             List<Map<String, String>> dataList = new ArrayList<>();
             dataList.add(convertFieldMap(dtsJsonObject.getJSONObject("afterImages")));
             canalJson.setData(dataList);
-            if("DELETE".equals(canalJson.getType())) {
+            if ("DELETE".equals(canalJson.getType())) {
                 canalJson.setData(oldList);
             }
 
@@ -126,6 +133,7 @@ public class CanalJsonUtils {
 
         return canalJson;
     }
+
     public static Map<String, String> convertToTypeNameMap(Map<String, Integer> sqlTypeMap) {
         Map<String, String> sqlTypeNameMap = new HashMap<>();
         for (Map.Entry<String, Integer> entry : sqlTypeMap.entrySet()) {
