@@ -132,8 +132,10 @@ public class Dts2CanalJson {
         sb.append(database).append(table);
         if (!pkNames.isEmpty() && !canalJson.getJSONArray("data").isEmpty()) {
             JSONObject dataObject = canalJson.getJSONArray("data").getJSONObject(0);
-            for (String pkName : pkNames) {
-                sb.append(dataObject.getString(pkName));
+            if (dataObject != null) {
+                for (String pkName : pkNames) {
+                    sb.append(dataObject.getString(pkName));
+                }
             }
         }
 

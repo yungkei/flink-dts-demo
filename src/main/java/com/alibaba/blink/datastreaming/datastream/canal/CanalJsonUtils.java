@@ -4,8 +4,11 @@ package com.alibaba.blink.datastreaming.datastream.canal;
 import com.alibaba.blink.datastreaming.datastream.action.AbstractDtsToKafkaFlinkAction;
 import com.alibaba.blink.datastreaming.datastream.action.RouteDef;
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -15,7 +18,6 @@ import java.util.stream.Collectors;
  * @author hzy
  */
 public class CanalJsonUtils {
-
     private final long startTime = System.currentTimeMillis();
     private long recordCount = 0;
     private static final Map<Integer, String> typeMap = new HashMap<>();
@@ -92,27 +94,30 @@ public class CanalJsonUtils {
                 canalJson.setIsDdl(true);
             }
         } else {
+            HashMap<String, String> extraFieldMap = new HashMap<>();
+            String systemOpTs = dtsJsonObject.getString("sourceTimestamp");
+            if (systemOpTs != null) {
+                extraFieldMap.put("system_op_ts", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Timestamp(Long.valueOf(systemOpTs) * 1000L)));
+            }
+            extraFieldMap.put("system_op_traceid", dtsJsonObject.getString("id"));
+
 
             // 需要一个键值对列表来表示之前的图像和之后的图像。
             List<Map<String, String>> oldList = new ArrayList<>();
-            oldList.add(convertFieldMap(dtsJsonObject.getJSONObject("beforeImages")));
+            oldList.addAll(convertFieldMap(dtsJsonObject.getJSONArray("beforeImages"), extraFieldMap));
             if (!"DELETE".equals(canalJson.getType())) {
                 canalJson.setOld(oldList);
             }
 
             List<Map<String, String>> dataList = new ArrayList<>();
-            dataList.add(convertFieldMap(dtsJsonObject.getJSONObject("afterImages")));
+            dataList.addAll(convertFieldMap(dtsJsonObject.getJSONArray("afterImages"), extraFieldMap));
             canalJson.setData(dataList);
             if ("DELETE".equals(canalJson.getType())) {
                 canalJson.setData(oldList);
             }
 
             // 字段类型和字段 SQL 类型映射
-            Map<String, Integer> sqlTypeMap = dtsJsonObject.getJSONArray("fields").stream()
-                    .collect(Collectors.toMap(
-                            fieldObj -> ((JSONObject) fieldObj).getString("name"),
-                            fieldObj -> ((JSONObject) fieldObj).getInteger("dataTypeNumber"))
-                    );
+            Map<String, Integer> sqlTypeMap = dtsJsonObject.getJSONArray("fields").stream().collect(Collectors.toMap(fieldObj -> ((JSONObject) fieldObj).getString("name"), fieldObj -> ((JSONObject) fieldObj).getInteger("dataTypeNumber")));
             canalJson.setSqlType(sqlTypeMap);
             canalJson.setMysqlType(convertToTypeNameMap(sqlTypeMap));
 
@@ -145,7 +150,7 @@ public class CanalJsonUtils {
         return sqlTypeNameMap;
     }
 
-    private static Map<String, String> convertFieldMap(JSONObject fieldJson) {
+    private static Map<String, String> convertFieldMap(JSONObject fieldJson, HashMap<String, String> extraFieldMap) {
         if (fieldJson == null) {
             return null;
         }
@@ -153,6 +158,33 @@ public class CanalJsonUtils {
         for (String key : fieldJson.keySet()) {
             fieldMap.put(key, fieldJson.getString(key));
         }
+
+        if (extraFieldMap != null && !extraFieldMap.isEmpty()) {
+            extraFieldMap.forEach((key, value) -> {
+                fieldMap.put(key, value);
+            });
+        }
+
         return fieldMap;
     }
+
+    private static Map<String, String> convertFieldMap(JSONObject fieldJson) {
+        return convertFieldMap(fieldJson, null);
+    }
+
+    private static List<Map<String, String>> convertFieldMap(JSONArray fieldJsonArray, HashMap<String, String> extraFieldMap) {
+        List<Map<String, String>> result = new ArrayList<>();
+        if (fieldJsonArray == null) {
+            return null;
+        }
+        for (int i = 0; i < fieldJsonArray.size(); i++) {
+            result.add(convertFieldMap(JSONObject.from(fieldJsonArray.get(i)), extraFieldMap));
+        }
+        return result;
+    }
+
+    private static List<Map<String, String>> convertFieldMap(JSONArray fieldJsonArray) {
+        return convertFieldMap(fieldJsonArray, null);
+    }
+
 }
