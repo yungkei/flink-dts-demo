@@ -89,6 +89,7 @@
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-runtime-web_2.11</artifactId>
             <version>1.11.1</version>
+            <scope>test</scope>
         </dependency>
 
     </dependencies>
@@ -119,7 +120,8 @@
                                 </filter>
                             </filters>
                             <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <manifestEntries>
                                         <Main-Class>com.alibaba.blink.datastreaming.datastream.DtsExample</Main-Class>
                                         <X-Compile-Source-JDK>${maven.compiler.source}</X-Compile-Source-JDK>
@@ -133,6 +135,9 @@
                                     <shadedPattern>com.alibaba.blink.shaded.dts.org.apache.kafka</shadedPattern>
                                 </relocation>
                             </relocations>
+                            <createDependencyReducedPom>true</createDependencyReducedPom>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>jar-with-dependencies</shadedClassifierName>
                         </configuration>
                     </execution>
                 </executions>

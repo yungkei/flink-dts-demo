@@ -36,7 +36,7 @@ public class DtsToKafkaFlinkActionTest {
                 System.out.println(sinkTableName);
                 Assert.equals("test_drds_hzy_pyii.sample_order_real_aeje", sinkTableName);
 
-
+                HashMap<String, String> extraColumns = this.extraColumnConfig;
                 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
                 env.enableCheckpointing(10000);
 
@@ -76,7 +76,7 @@ public class DtsToKafkaFlinkActionTest {
                 DataStream<String> input = env.fromCollection(Collections.singleton(dtsRecord.toString()))
                         .map(dtsRecord -> {
                             if (dtsRecord != null) {
-                                return JSON.toJSONString(CanalJsonUtils.convert(JSONObject.parseObject(dtsRecord), routeDefs));
+                                return JSON.toJSONString(CanalJsonUtils.convert(JSONObject.parseObject(dtsRecord), routeDefs, extraColumns));
                             }
                             return null;
                         }).filter((FilterFunction<String>) record -> {

@@ -1,6 +1,5 @@
 package com.alibaba.blink.datastreaming.datastream.canal;
 
-
 import com.alibaba.blink.datastreaming.datastream.action.AbstractDtsToKafkaFlinkAction;
 import com.alibaba.blink.datastreaming.datastream.action.RouteDef;
 import com.alibaba.fastjson2.JSON;
@@ -9,7 +8,10 @@ import com.alibaba.fastjson2.JSONObject;
 
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -21,6 +23,18 @@ public class CanalJsonUtils {
     private final long startTime = System.currentTimeMillis();
     private long recordCount = 0;
     private static final Map<Integer, String> typeMap = new HashMap<>();
+
+    private static final String SYSTEM_PHYSICAL_DB_KEY = "SYSTEM_PHYSICAL_DB";
+    private static final String SYSTEM_PHYSICAL_TABLE_KEY = "SYSTEM_PHYSICAL_TABLE";
+    private static final String SYSTEM_LOGICAL_DB_KEY = "SYSTEM_LOGICAL_DB";
+    private static final String SYSTEM_LOGICAL_TABLE_KEY = "SYSTEM_LOGICAL_TABLE";
+    private static final String SYSTEM_OP_TS_KEY = "SYSTEM_OP_TS";
+    private static final String SYSTEM_OP_TRACEID_KEY = "SYSTEM_OP_TRACEID";
+    private static final String PROV_KEY = "prov";
+    private static final String PROV_KEY_UPPER = "PROV";
+
+    private static final String DTS_FIELDS_NAME_KEY = "name";
+    private static final String DTS_FIELDS_DATA_TYPE_NUMBER_KEY = "dataTypeNumber";
 
     static {
         typeMap.put(0, "DECIMAL");
@@ -65,12 +79,10 @@ public class CanalJsonUtils {
     }
 
     public static CanalJson convert(JSONObject dtsJsonObject) {
-        return convert(dtsJsonObject, null);
+        return convert(dtsJsonObject, null, null);
     }
 
-    public static CanalJson convert(JSONObject dtsJsonObject, List<RouteDef> routeDefs) {
-
-
+    public static CanalJson convert(JSONObject dtsJsonObject, List<RouteDef> routeDefs, HashMap<String, String> extraColumns) {
         CanalJson canalJson = new CanalJson();
         canalJson.setType(dtsJsonObject.getString("operation")); // 假定 operation 字段即代表了 DTS 操作类型 UPDATE, INSERT 等
         canalJson.setId(dtsJsonObject.getLong("id"));
@@ -97,29 +109,81 @@ public class CanalJsonUtils {
             HashMap<String, String> extraFieldMap = new HashMap<>();
             String systemOpTs = dtsJsonObject.getString("sourceTimestamp");
             if (systemOpTs != null) {
-                extraFieldMap.put("system_op_ts", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Timestamp(Long.valueOf(systemOpTs) * 1000L)));
+                extraFieldMap.put(SYSTEM_OP_TS_KEY, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Timestamp(Long.valueOf(systemOpTs) * 1000L)));
             }
-            extraFieldMap.put("system_op_traceid", dtsJsonObject.getString("id"));
+            extraFieldMap.put(SYSTEM_OP_TRACEID_KEY, dtsJsonObject.getString("id"));
 
+            String[] sourceTableArray = dtsObjectName.split("\\.");
+            if (sourceTableArray.length == 1) {
+                extraFieldMap.put(SYSTEM_PHYSICAL_DB_KEY, sourceTableArray[0]);
+                extraFieldMap.put(SYSTEM_PHYSICAL_TABLE_KEY, null);
+            } else {
+                extraFieldMap.put(SYSTEM_PHYSICAL_DB_KEY, sourceTableArray[0]);
+                extraFieldMap.put(SYSTEM_PHYSICAL_TABLE_KEY, sourceTableArray[1]);
+            }
+
+            if (dbTableArray.length == 1) {
+                extraFieldMap.put(SYSTEM_LOGICAL_DB_KEY, dbTableArray[0]);
+                extraFieldMap.put(SYSTEM_LOGICAL_TABLE_KEY, null);
+            } else {
+                extraFieldMap.put(SYSTEM_LOGICAL_DB_KEY, dbTableArray[0]);
+                extraFieldMap.put(SYSTEM_LOGICAL_TABLE_KEY, dbTableArray[1]);
+            }
+
+            if (extraColumns != null && !extraColumns.isEmpty()) {
+                extraFieldMap.put(PROV_KEY_UPPER, extraColumns.get(PROV_KEY));
+            }
 
             // 需要一个键值对列表来表示之前的图像和之后的图像。
             List<Map<String, String>> oldList = new ArrayList<>();
-            oldList.addAll(convertFieldMap(dtsJsonObject.getJSONArray("beforeImages"), extraFieldMap));
+            oldList.add(convertFieldMap(dtsJsonObject.getJSONObject("beforeImages"), extraFieldMap));
             if (!"DELETE".equals(canalJson.getType())) {
                 canalJson.setOld(oldList);
             }
 
             List<Map<String, String>> dataList = new ArrayList<>();
-            dataList.addAll(convertFieldMap(dtsJsonObject.getJSONArray("afterImages"), extraFieldMap));
+            dataList.add(convertFieldMap(dtsJsonObject.getJSONObject("afterImages"), extraFieldMap));
             canalJson.setData(dataList);
             if ("DELETE".equals(canalJson.getType())) {
                 canalJson.setData(oldList);
             }
 
+            JSONArray dtsJsonFields = dtsJsonObject.getJSONArray("fields");
+            dtsJsonFields.add(new JSONObject() {{
+                put(DTS_FIELDS_NAME_KEY, SYSTEM_PHYSICAL_DB_KEY);
+                put(DTS_FIELDS_DATA_TYPE_NUMBER_KEY, 254);
+            }});
+            dtsJsonFields.add(new JSONObject() {{
+                put(DTS_FIELDS_NAME_KEY, SYSTEM_PHYSICAL_TABLE_KEY);
+                put(DTS_FIELDS_DATA_TYPE_NUMBER_KEY, 254);
+            }});
+            dtsJsonFields.add(new JSONObject() {{
+                put(DTS_FIELDS_NAME_KEY, SYSTEM_LOGICAL_DB_KEY);
+                put(DTS_FIELDS_DATA_TYPE_NUMBER_KEY, 254);
+            }});
+            dtsJsonFields.add(new JSONObject() {{
+                put(DTS_FIELDS_NAME_KEY, SYSTEM_LOGICAL_TABLE_KEY);
+                put(DTS_FIELDS_DATA_TYPE_NUMBER_KEY, 254);
+            }});
+            dtsJsonFields.add(new JSONObject() {{
+                put(DTS_FIELDS_NAME_KEY, SYSTEM_OP_TS_KEY);
+                put(DTS_FIELDS_DATA_TYPE_NUMBER_KEY, 7);
+            }});
+            dtsJsonFields.add(new JSONObject() {{
+                put(DTS_FIELDS_NAME_KEY, SYSTEM_OP_TRACEID_KEY);
+                put(DTS_FIELDS_DATA_TYPE_NUMBER_KEY, 254);
+            }});
+            dtsJsonFields.add(new JSONObject() {{
+                put(DTS_FIELDS_NAME_KEY, PROV_KEY_UPPER);
+                put(DTS_FIELDS_DATA_TYPE_NUMBER_KEY, 254);
+            }});
+
+
             // 字段类型和字段 SQL 类型映射
-            Map<String, Integer> sqlTypeMap = dtsJsonObject.getJSONArray("fields").stream().collect(Collectors.toMap(fieldObj -> ((JSONObject) fieldObj).getString("name"), fieldObj -> ((JSONObject) fieldObj).getInteger("dataTypeNumber")));
+            Map<String, Integer> sqlTypeMap = dtsJsonFields.stream().collect(Collectors.toMap(fieldObj -> ((JSONObject) fieldObj).getString("name"), fieldObj -> ((JSONObject) fieldObj).getInteger("dataTypeNumber")));
             canalJson.setSqlType(sqlTypeMap);
-            canalJson.setMysqlType(convertToTypeNameMap(sqlTypeMap));
+            Map<String, String> mysqlType = convertToTypeNameMap(sqlTypeMap);
+            canalJson.setMysqlType(mysqlType);
 
             // 其他字段根据实际情况进行填充
             canalJson.setEs(dtsJsonObject.getLong("sourceTimestamp"));
@@ -171,20 +235,4 @@ public class CanalJsonUtils {
     private static Map<String, String> convertFieldMap(JSONObject fieldJson) {
         return convertFieldMap(fieldJson, null);
     }
-
-    private static List<Map<String, String>> convertFieldMap(JSONArray fieldJsonArray, HashMap<String, String> extraFieldMap) {
-        List<Map<String, String>> result = new ArrayList<>();
-        if (fieldJsonArray == null) {
-            return null;
-        }
-        for (int i = 0; i < fieldJsonArray.size(); i++) {
-            result.add(convertFieldMap(JSONObject.from(fieldJsonArray.get(i)), extraFieldMap));
-        }
-        return result;
-    }
-
-    private static List<Map<String, String>> convertFieldMap(JSONArray fieldJsonArray) {
-        return convertFieldMap(fieldJsonArray, null);
-    }
-
 }

@@ -3,12 +3,16 @@ package com.alibaba.blink.datastreaming.datastream.action;
 import com.alibaba.fastjson.JSONObject;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.java.utils.MultipleParameterTool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
 public abstract class AbstractFlinkAction {
+    private static final Logger LOG = LoggerFactory.getLogger(AbstractFlinkAction.class);
+
     protected HashMap<String, String> sourceConfig;
     protected HashMap<String, String> sinkConfig;
     protected List<RouteDef> routeConfig;
@@ -42,7 +46,7 @@ public abstract class AbstractFlinkAction {
         this.routeConfig = optionalConfigList(args, ROUTE, item -> toRouteDef(item));
     }
 
-    private HashMap<String, String> optionalConfigMap(String[] args, String key) {
+    protected HashMap<String, String> optionalConfigMap(String[] args, String key) {
         MultipleParameterTool mpTool = MultipleParameterTool.fromArgs(args);
         Collection<String> kvCollection = mpTool.getMultiParameter(key);
         HashMap<String, String> configMap = new HashMap<>();
@@ -51,6 +55,9 @@ public abstract class AbstractFlinkAction {
     }
 
     private static void parseKeyValueString(Map<String, String> map, Collection<String> kvCollection) {
+        if (kvCollection == null || kvCollection.isEmpty()) {
+            return;
+        }
         kvCollection.stream().forEach(kvString -> {
             String[] kv = kvString.split("=", 2);
             if (kv.length != 2) {
@@ -60,7 +67,7 @@ public abstract class AbstractFlinkAction {
         });
     }
 
-    private <T> List<T> optionalConfigList(String[] args, String key, Function<String, T> action) {
+    protected <T> List<T> optionalConfigList(String[] args, String key, Function<String, T> action) {
         MultipleParameterTool mpTool = MultipleParameterTool.fromArgs(args);
         Collection<String> kvCollection = mpTool.getMultiParameter(key);
         List<T> result = new ArrayList<>();
@@ -73,7 +80,7 @@ public abstract class AbstractFlinkAction {
         try {
             jsonObject = JSONObject.parseObject(jsonString);
         } catch (Exception e) {
-            System.out.println(e);
+            LOG.warn("toRouteDef parseObject error:", e);
             return new RouteDef("", "", "");
         }
         String sourceTable = jsonObject.getOrDefault(ROUTE_SOURCE_TABLE_KEY, "").toString();
