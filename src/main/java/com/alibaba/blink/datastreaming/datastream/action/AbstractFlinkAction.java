@@ -16,10 +16,12 @@ public abstract class AbstractFlinkAction {
     protected HashMap<String, String> sourceConfig;
     protected HashMap<String, String> sinkConfig;
     protected List<RouteDef> routeConfig;
+    protected String jobName;
     private static final String ROUTE = "route";
     private static final String ROUTE_SOURCE_TABLE_KEY = "source-table";
     private static final String ROUTE_SINK_TABLE_KEY = "sink-table";
     private static final String ROUTE_DESCRIPTION_KEY = "description";
+    private static final String JOB_NAME = "job-name";
 
     protected abstract String getSourceIdentifier();
 
@@ -30,6 +32,7 @@ public abstract class AbstractFlinkAction {
         setSinkConfig(args, getSinkIdentifier());
         setRouteConfig(args);
         setExtraConfig(args);
+        setJobName(args);
     }
 
     abstract void setExtraConfig(String[] args);
@@ -44,6 +47,15 @@ public abstract class AbstractFlinkAction {
 
     protected void setRouteConfig(String[] args) {
         this.routeConfig = optionalConfigList(args, ROUTE, item -> toRouteDef(item));
+    }
+
+    protected void setJobName(String[] args) {
+        List<String> mapParallelisms = optionalConfigList(args, JOB_NAME, item -> item);
+        if (mapParallelisms == null || mapParallelisms.isEmpty()) {
+            this.jobName = "default";
+        } else {
+            this.jobName = mapParallelisms.get(0);
+        }
     }
 
     protected HashMap<String, String> optionalConfigMap(String[] args, String key) {

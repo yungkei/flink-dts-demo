@@ -11,18 +11,22 @@ import com.alibaba.fastjson2.JSONObject;
 import com.alibaba.flink.connectors.dts.FlinkDtsRawConsumer;
 import com.aliyun.dts.subscribe.clients.record.OperationType;
 import com.aliyun.dts.subscribe.clients.recordgenerator.AvroDeserializer;
+import com.google.common.hash.Hashing;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.flink.api.common.functions.FilterFunction;
-import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.api.common.typeinfo.Types;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.sink.PrintSinkFunction;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
 import org.apache.flink.streaming.connectors.kafka.internals.KeyedSerializationSchemaWrapper;
 import org.apache.flink.streaming.connectors.kafka.partitioner.FlinkKafkaPartitioner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
@@ -46,6 +50,9 @@ public class Dts2CanalJsonKafka {
                 String excludingTables = this.excludingTablesConfig;
                 Integer mapParallelism = this.mapParallelismConfig;
                 Integer sinkParallelism = this.sinkParallelismConfig;
+                String prov = extraColumns.getOrDefault("prov", "");
+                String enableDdl = this.enableDdl;
+                String jobName = this.jobName;
 
                 LOG.info("dts.broker-url:{}", this.sourceConfig.get("broker-url"));
                 LOG.info("dts.topic:{}", this.sourceConfig.get("topic"));
@@ -59,46 +66,36 @@ public class Dts2CanalJsonKafka {
                 LOG.info("excludingTables:{}", excludingTables);
                 LOG.info("mapParallelism:{}", mapParallelism);
                 LOG.info("sinkParallelism:{}", sinkParallelism);
+                LOG.info("prov:{}", prov);
 
-                DataStream<String> input = env.addSource(new FlinkDtsRawConsumer(this.sourceConfig.get("broker-url"), this.sourceConfig.get("topic"), this.sourceConfig.get("sid"), this.sourceConfig.get("group"), this.sourceConfig.get("user"), this.sourceConfig.get("password"), Long.parseLong(this.sourceConfig.get("startupOffsetsTimestamp")), new DtsByteDeserializationSchema(), null))
-                        .map((MapFunction<ByteRecord, String>) byteRecord -> {
-                            if (byteRecord != null) {
-                                JsonDtsRecord record = new JsonDtsRecord(byteRecord.getBytes(), new AvroDeserializer());
-                                JSONObject dtsJson;
-                                try {
-                                    dtsJson = record.getJson();
-                                } catch (Exception e) {
-                                    LOG.error("record.getJson error:", e);
-                                    return null;
-                                }
-                                if (OperationType.INSERT == record.getOperationType() || OperationType.UPDATE == record.getOperationType() || OperationType.DELETE == record.getOperationType() || OperationType.DDL == record.getOperationType()) {
-                                    String dtsObjectName = dtsJson.getString("objectName");
-                                    if (!shouldMonitorTable(dtsObjectName, includingTables, excludingTables)) {
-                                        return null;
-                                    }
-                                    LOG.debug("Source table '{}' is included.", dtsObjectName);
-                                    LOG.debug("dtsJson:{}", dtsJson);
-                                    try {
-                                        String canalJson = JSON.toJSONString(CanalJsonUtils.convert(dtsJson, routeDefs, extraColumns));
-                                        LOG.debug("canalJson:{}", canalJson);
-                                        return canalJson;
-                                    } catch (Exception ex) {
-                                        LOG.warn("parse dts {} to canal failed :", record, ex);
-                                    }
+                DataStream<String> input = env.addSource(new FlinkDtsRawConsumer(this.sourceConfig.get("broker-url"), this.sourceConfig.get("topic"), this.sourceConfig.get("sid"), this.sourceConfig.get("group"), this.sourceConfig.get("user"), this.sourceConfig.get("password"), Long.parseLong(this.sourceConfig.get("startupOffsetsTimestamp")), new DtsByteDeserializationSchema(), null)).name("Dts").flatMap((FlatMapFunction<ByteRecord, String>) (byteRecord, out) -> {
+                    if (byteRecord != null) {
+                        JsonDtsRecord record = new JsonDtsRecord(byteRecord.getBytes(), new AvroDeserializer());
+                        JSONObject dtsJson;
+                        try {
+                            dtsJson = record.getJson();
+                        } catch (Exception e) {
+                            LOG.error("record.getJson error:", e);
+                            return;
+                        }
 
-                                } else {
-                                    return null;
-                                }
+                        if (OperationType.INSERT == record.getOperationType() || OperationType.UPDATE == record.getOperationType() || OperationType.DELETE == record.getOperationType() || (OperationType.DDL == record.getOperationType() && "true".equals(enableDdl))) {
+                            String dtsObjectName = dtsJson.getString("objectName");
+                            if (!shouldMonitorTable(dtsObjectName, includingTables, excludingTables)) {
+                                return;
                             }
-                            return null;
-                        }).setParallelism(mapParallelism)
-                        .filter((FilterFunction<String>) record -> {
-                            if (record == null || record.isEmpty()) {
-                                return false;
-                            } else {
-                                return true;
+                            LOG.debug("Source table '{}' is included.", dtsObjectName);
+                            LOG.debug("dtsJson:{}", dtsJson);
+                            try {
+                                String canalJson = JSON.toJSONString(CanalJsonUtils.convert(dtsJson, routeDefs, extraColumns));
+                                LOG.debug("canalJson:{}", canalJson);
+                                out.collect(canalJson);
+                            } catch (Exception ex) {
+                                LOG.warn("parse dts {} to canal failed :", record, ex);
                             }
-                        });
+                        }
+                    }
+                }).returns(Types.STRING).setParallelism(mapParallelism);
 
                 Properties sinkProperties = new Properties();
                 String kafkaBootstrapServers = this.sinkConfig.get("bootstrap.servers");
@@ -121,6 +118,7 @@ public class Dts2CanalJsonKafka {
                 LOG.info("kafka.sasl.jaas.config:{}", kafkaSaslJaasConfig);
 
                 if (StringUtils.isBlank(kafkaTopic)) {
+                    input.addSink(new PrintSinkFunction<>()).setParallelism(sinkParallelism);
                     env.execute("Dts2Canal");
                     return;
                 }
@@ -139,22 +137,46 @@ public class Dts2CanalJsonKafka {
                         JSONObject jsonObject = JSONObject.parseObject(value);
                         String operationType = jsonObject.getString("type");
                         if (operationType.equals("INSERT") || operationType.equals("UPDATE") || operationType.equals("DELETE")) {
-                            return Dts2CanalJson.calculatePartition(jsonObject, partitions.length);
+                            return calculatePartition(jsonObject, partitions.length, prov);
                         } else {
                             return 0;
                         }
                     }
                 }));
 
-                input.addSink(kafkaProducer).setParallelism(sinkParallelism);
+                input.addSink(kafkaProducer).name("Kafka").setParallelism(sinkParallelism);
 
-                env.execute("Dts to Kafka Canal");
+                env.execute(jobName);
             }
         };
         flinkAction.create(args);
 
         flinkAction.run();
 
+    }
+
+    public static int calculatePartition(JSONObject canalJson, int totalPartitions, String prov) {
+        String database = canalJson.getString("database");
+        String table = canalJson.getString("table");
+        List<String> pkNames = canalJson.getJSONArray("pkNames").toJavaList(String.class);
+
+        StringBuilder sb = new StringBuilder();
+        if (StringUtils.isNotBlank(prov)) {
+            sb.append(prov);
+        }
+        sb.append(database).append(table);
+        if (!pkNames.isEmpty() && !canalJson.getJSONArray("data").isEmpty()) {
+            JSONObject dataObject = canalJson.getJSONArray("data").getJSONObject(0);
+            if (dataObject != null) {
+                for (String pkName : pkNames) {
+                    sb.append(dataObject.getString(pkName));
+                }
+            }
+        }
+
+        int partitionHash = Hashing.murmur3_32().hashString(sb.toString(), StandardCharsets.UTF_8).asInt();
+        int partition = Math.abs(partitionHash % totalPartitions);
+        return partition;
     }
 
 }

@@ -8,10 +8,7 @@ import com.alibaba.fastjson2.JSONObject;
 
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -90,7 +87,8 @@ public class CanalJsonUtils {
 
         // 将数据库和表名分割
         String dtsObjectName = dtsJsonObject.getString("objectName");
-        String dtsObjectNamePerformed = AbstractDtsToKafkaFlinkAction.convertTableNameIfMatched(routeDefs, dtsObjectName);
+        String dtsObjectNamePerformedPre = AbstractDtsToKafkaFlinkAction.convertTableNameIfMatched(routeDefs, dtsObjectName);
+        String dtsObjectNamePerformed = performDtsObjectName(dtsObjectName, dtsObjectNamePerformedPre);
         String[] dbTableArray = dtsObjectNamePerformed.split("\\.");
         if (dbTableArray.length == 1) {
             canalJson.setDatabase(dbTableArray[0]);
@@ -197,6 +195,25 @@ public class CanalJsonUtils {
                     canalJson.setPkNames(pkInfo.getJSONArray("PRIMARY").toJavaList(String.class));
                 }
             }
+
+            HashMap<String, String> dts = new HashMap<>();
+            if (tags != null && tags.containsKey("traceid")) {
+                dts.put("traceid", tags.getString("traceid"));
+            } else {
+                dts.put("traceid", "");
+            }
+            if (tags != null && tags.containsKey("readerThroughoutTime")) {
+                String readerThroughoutTime = tags.getString("readerThroughoutTime");
+                if (readerThroughoutTime != null) {
+                    dts.put("readerThroughoutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Timestamp(Long.valueOf(readerThroughoutTime))));
+                } else {
+                    dts.put("readerThroughoutTime", "");
+                }
+            } else {
+                dts.put("readerThroughoutTime", "");
+            }
+            canalJson.setDts(dts);
+
         }
 
 
@@ -234,5 +251,14 @@ public class CanalJsonUtils {
 
     private static Map<String, String> convertFieldMap(JSONObject fieldJson) {
         return convertFieldMap(fieldJson, null);
+    }
+
+    private static String performDtsObjectName(String source, String preTarget) {
+        String[] dbTableArray = preTarget.split("\\.");
+        if (dbTableArray.length == 2) {
+            return preTarget;
+        } else {
+            return source;
+        }
     }
 }

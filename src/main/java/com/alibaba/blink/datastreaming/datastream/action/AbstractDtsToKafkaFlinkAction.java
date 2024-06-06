@@ -26,6 +26,9 @@ public abstract class AbstractDtsToKafkaFlinkAction extends AbstractFlinkAction 
     public static final String INCLUDING_TABLES = "including_tables";
     public static final String EXCLUDING_TABLES = "excluding_tables";
 
+    protected String enableDdl;
+    private static final String ENABLE_DDL = "enable-ddl";
+
     @Override
     protected String getSourceIdentifier() {
         return DTS;
@@ -46,6 +49,16 @@ public abstract class AbstractDtsToKafkaFlinkAction extends AbstractFlinkAction 
         setExtraColumnConfig(args);
         setIncludingTablesConfig(args);
         setExcludingTablesConfig(args);
+        setEnableDdl(args);
+    }
+
+    private void setEnableDdl(String[] args) {
+        List<String> mapParallelisms = optionalConfigList(args, ENABLE_DDL, item -> item);
+        if (mapParallelisms == null || mapParallelisms.isEmpty()) {
+            this.enableDdl = "true";
+        } else {
+            this.enableDdl = mapParallelisms.get(0);
+        }
     }
 
     private void setMapParallelismConfig(String[] args) {
