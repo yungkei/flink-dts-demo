@@ -13,7 +13,7 @@ public class DtsTableIJoinTCase {
 
     public static void setup() {
 
-        EnvironmentSettings settings = EnvironmentSettings.newInstance().useBlinkPlanner().inStreamingMode().build();
+        EnvironmentSettings settings = EnvironmentSettings.newInstance().build();
 
         env = StreamExecutionEnvironment.getExecutionEnvironment();
 

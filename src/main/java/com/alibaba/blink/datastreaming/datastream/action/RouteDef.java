@@ -1,65 +1,66 @@
 package com.alibaba.blink.datastreaming.datastream.action;
 
-import javax.annotation.Nullable;
 import java.io.Serializable;
+import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 public class RouteDef implements Serializable {
-    private static final long serialVersionUID = 5046819613535805118L;
+    private static final long serialVersionUID = -3216755435511898183L;
+    private final String sourceDatabase;
+    private final String targetDatabase;
+    private final String includingTargetTables;
+    private final String excludingTargetTables;
+    private final List<FlatRouteDef> tableRouteDef;
 
-    private final String sourceTable;
-    private final String sinkTable;
-    @Nullable
-    private final String description;
-
-    public RouteDef(String sourceTable, String sinkTable, @Nullable String description) {
-        this.sourceTable = sourceTable;
-        this.sinkTable = sinkTable;
-        this.description = description;
+    public RouteDef(String sourceTable, String sinkTable, String includingTargetTables, String excludingTargetTables, List<FlatRouteDef> tableRouteDef) {
+        this.sourceDatabase = sourceTable;
+        this.targetDatabase = sinkTable;
+        this.includingTargetTables = includingTargetTables;
+        this.excludingTargetTables = excludingTargetTables;
+        this.tableRouteDef = tableRouteDef;
     }
 
-    public String getSourceTable() {
-        return sourceTable;
+    public String getSourceDatabase() {
+        return sourceDatabase;
     }
 
-    public String getSinkTable() {
-        return sinkTable;
+    public String getTargetDatabase() {
+        return targetDatabase;
     }
 
-    public Optional<String> getDescription() {
-        return Optional.ofNullable(description);
+    public String getIncludingTargetTables() {
+        return includingTargetTables;
+    }
+
+    public String getExcludingTargetTables() {
+        return excludingTargetTables;
+    }
+
+    public List<FlatRouteDef> getTableRouteDef() {
+        return tableRouteDef;
     }
 
     @Override
     public String toString() {
-        return "RouteDef{"
-                + "sourceTable="
-                + sourceTable
-                + ", sinkTable="
-                + sinkTable
-                + ", description='"
-                + description
-                + '\''
-                + '}';
+        return "RouteDef{" +
+                "sourceDatabase='" + sourceDatabase + '\'' +
+                ", targetDatabase='" + targetDatabase + '\'' +
+                ", includingTargetTables='" + includingTargetTables + '\'' +
+                ", excludingTargetTables='" + excludingTargetTables + '\'' +
+                ", tableRouteDef=" + tableRouteDef +
+                '}';
     }
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
         RouteDef routeDef = (RouteDef) o;
-        return Objects.equals(sourceTable, routeDef.sourceTable)
-                && Objects.equals(sinkTable, routeDef.sinkTable)
-                && Objects.equals(description, routeDef.description);
+        return Objects.equals(sourceDatabase, routeDef.sourceDatabase) && Objects.equals(targetDatabase, routeDef.targetDatabase) && Objects.equals(includingTargetTables, routeDef.includingTargetTables) && Objects.equals(excludingTargetTables, routeDef.excludingTargetTables) && Objects.equals(tableRouteDef, routeDef.tableRouteDef);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(sourceTable, sinkTable, description);
+        return Objects.hash(sourceDatabase, targetDatabase, includingTargetTables, excludingTargetTables, tableRouteDef);
     }
 }

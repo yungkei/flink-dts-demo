@@ -47,7 +47,7 @@ public class DtsTableISelectTCaseTest {
                         CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
         env.setStateBackend(new FsStateBackend("file:///tmp/checkpoints/dts-checkpoint"));
 
-        EnvironmentSettings settings = EnvironmentSettings.newInstance().useBlinkPlanner().inStreamingMode().build();
+        EnvironmentSettings settings = EnvironmentSettings.newInstance().build();
 
         tEnv = StreamTableEnvironment.create(env, settings);
 

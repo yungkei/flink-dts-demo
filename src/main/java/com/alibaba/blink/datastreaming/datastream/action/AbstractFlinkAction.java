@@ -1,6 +1,7 @@
 package com.alibaba.blink.datastreaming.datastream.action;
 
-import com.alibaba.fastjson.JSONObject;
+import com.alibaba.fastjson2.JSONObject;
+import com.alibaba.fastjson2.JSONArray;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.java.utils.MultipleParameterTool;
 import org.slf4j.Logger;
@@ -18,8 +19,13 @@ public abstract class AbstractFlinkAction {
     protected List<RouteDef> routeConfig;
     protected String jobName;
     private static final String ROUTE = "route";
+    private static final String ROUTE_SOURCE_DATABASE_KEY = "source-database";
+    private static final String ROUTE_TARGET_DATABASE_KEY = "target-database";
+    private static final String INCLUDING_TARGET_TABLES_KEY = "including-target-tables";
+    private static final String EXCLUDING_TARGET_TABLES_KEY = "excluding-target-tables";
+    private static final String TABLE_ROUTE_KEY = "table-route";
     private static final String ROUTE_SOURCE_TABLE_KEY = "source-table";
-    private static final String ROUTE_SINK_TABLE_KEY = "sink-table";
+    private static final String ROUTE_TARGET_TABLE_KEY = "target-table";
     private static final String ROUTE_DESCRIPTION_KEY = "description";
     private static final String JOB_NAME = "job-name";
 
@@ -93,12 +99,24 @@ public abstract class AbstractFlinkAction {
             jsonObject = JSONObject.parseObject(jsonString);
         } catch (Exception e) {
             LOG.warn("toRouteDef parseObject error:", e);
-            return new RouteDef("", "", "");
+            return new RouteDef("", "", "", "", Collections.emptyList());
         }
-        String sourceTable = jsonObject.getOrDefault(ROUTE_SOURCE_TABLE_KEY, "").toString();
-        String sinkTable = jsonObject.getOrDefault(ROUTE_SINK_TABLE_KEY, "").toString();
-        String description = jsonObject.getOrDefault(ROUTE_DESCRIPTION_KEY, "").toString();
-        return new RouteDef(sourceTable, sinkTable, description);
+        String sourceDatabase = jsonObject.getOrDefault(ROUTE_SOURCE_DATABASE_KEY, "").toString();
+        String targetDatabase = jsonObject.getOrDefault(ROUTE_TARGET_DATABASE_KEY, "").toString();
+        String includingTargetTables = jsonObject.getOrDefault(INCLUDING_TARGET_TABLES_KEY, "").toString();
+        String excludingTargetTables = jsonObject.getOrDefault(EXCLUDING_TARGET_TABLES_KEY, "").toString();
+        JSONArray tableRouteJSONArray = jsonObject.getJSONArray(TABLE_ROUTE_KEY);
+        List<FlatRouteDef> flatRouteDefs = new ArrayList<>();
+        if (tableRouteJSONArray != null && !tableRouteJSONArray.isEmpty()) {
+            for (int i = 0; i < tableRouteJSONArray.size(); i++) {
+                JSONObject tableRouteJSONObject = tableRouteJSONArray.getJSONObject(i);
+                String sourceTable = tableRouteJSONObject.getOrDefault(ROUTE_SOURCE_TABLE_KEY, "").toString();
+                String targetTable = tableRouteJSONObject.getOrDefault(ROUTE_TARGET_TABLE_KEY, "").toString();
+                String description = tableRouteJSONObject.getOrDefault(ROUTE_DESCRIPTION_KEY, "").toString();
+                flatRouteDefs.add(new FlatRouteDef(sourceTable, targetTable, description));
+            }
+        }
+        return new RouteDef(sourceDatabase, targetDatabase, includingTargetTables, excludingTargetTables, flatRouteDefs);
     }
 
     public static boolean matchWithTablePattern(Pattern sourcePattern, String source) {
@@ -118,22 +136,48 @@ public abstract class AbstractFlinkAction {
         return source;
     }
 
-    public static String convertTableNameIfMatched(List<RouteDef> routeDefs, String source) {
-        if (routeDefs == null || routeDefs.isEmpty()) {
+    public static String convertTableNameIfMatched(List<FlatRouteDef> flatRouteDefs, String source) {
+        if (flatRouteDefs == null || flatRouteDefs.isEmpty()) {
             return source;
         }
 
-        for (int i = 0; i < routeDefs.size(); i++) {
-            RouteDef routeDef = routeDefs.get(i);
+        for (int i = 0; i < flatRouteDefs.size(); i++) {
+            FlatRouteDef flatRouteDef = flatRouteDefs.get(i);
 
-            Pattern pattern = Pattern.compile(routeDef.getSourceTable());
+            Pattern pattern = Pattern.compile(flatRouteDef.getSourceTable());
             boolean isMatched = matchWithTablePattern(pattern, source);
 
-            if (isMatched && !StringUtils.isBlank(routeDef.getSinkTable())) {
-                return routeDef.getSinkTable();
+            if (isMatched && !StringUtils.isBlank(flatRouteDef.getTargetTable())) {
+                return flatRouteDef.getTargetTable();
             }
         }
         return source;
+    }
+
+    public static List<FlatRouteDef> flatRouteDefs(List<RouteDef> routeDefs) {
+        List<FlatRouteDef> flatRouteDefs = new ArrayList<>(300);
+        if (routeDefs == null || routeDefs.isEmpty()) {
+            return flatRouteDefs;
+        }
+        for (int i = 0; i < routeDefs.size(); i++) {
+            RouteDef routeDef = routeDefs.get(i);
+            String sourceDatabase = routeDef.getSourceDatabase();
+            String targetDatabase = routeDef.getTargetDatabase();
+            List<FlatRouteDef> tableRouteDefs = routeDef.getTableRouteDef();
+            if (tableRouteDefs == null || tableRouteDefs.isEmpty()) {
+                continue;
+            }
+            for (int j = 0; j < tableRouteDefs.size(); j++) {
+                FlatRouteDef tableRouteDef = tableRouteDefs.get(j);
+                String sourceTable = tableRouteDef.getSourceTable();
+                String targetTable = tableRouteDef.getTargetTable();
+                Optional<String> description = tableRouteDef.getDescription();
+                String sourceFlatTable = sourceDatabase + "." + sourceTable;
+                String targetFlatTable = targetDatabase + "." + targetTable;
+                flatRouteDefs.add(new FlatRouteDef(sourceFlatTable, targetFlatTable, description.isPresent() ? description.get() : null));
+            }
+        }
+        return flatRouteDefs;
     }
 
     protected abstract void run() throws Exception;

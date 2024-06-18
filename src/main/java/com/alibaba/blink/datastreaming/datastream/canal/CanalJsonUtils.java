@@ -2,13 +2,17 @@ package com.alibaba.blink.datastreaming.datastream.canal;
 
 import com.alibaba.blink.datastreaming.datastream.action.AbstractDtsToKafkaFlinkAction;
 import com.alibaba.blink.datastreaming.datastream.action.RouteDef;
+import com.alibaba.blink.datastreaming.datastream.action.FlatRouteDef;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import org.apache.commons.lang3.StringUtils;
 
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -56,15 +60,15 @@ public class CanalJsonUtils {
         typeMap.put(19, "TIME");
         typeMap.put(245, "JSON");
         // decimal we cannot get scale so use string
-        typeMap.put(246, "STRING");
+        typeMap.put(246, "VARCHAR");
         typeMap.put(247, "ENUM");
         typeMap.put(248, "SET");
         typeMap.put(249, "TINYBLOB");
         typeMap.put(250, "MEDIUMBLOB");
         typeMap.put(251, "LONGBLOB");
         typeMap.put(252, "BLOB");
-        typeMap.put(253, "STRING");
-        typeMap.put(254, "STRING");
+        typeMap.put(253, "VARCHAR");
+        typeMap.put(254, "VARCHAR");
         typeMap.put(255, "GEOMETRY");
         // 添加其他类型映射...
     }
@@ -84,10 +88,11 @@ public class CanalJsonUtils {
         canalJson.setType(dtsJsonObject.getString("operation")); // 假定 operation 字段即代表了 DTS 操作类型 UPDATE, INSERT 等
         canalJson.setId(dtsJsonObject.getLong("id"));
 
+        List<FlatRouteDef> flatRouteDefs = AbstractDtsToKafkaFlinkAction.flatRouteDefs(routeDefs);
 
         // 将数据库和表名分割
         String dtsObjectName = dtsJsonObject.getString("objectName");
-        String dtsObjectNamePerformedPre = AbstractDtsToKafkaFlinkAction.convertTableNameIfMatched(routeDefs, dtsObjectName);
+        String dtsObjectNamePerformedPre = AbstractDtsToKafkaFlinkAction.convertTableNameIfMatched(flatRouteDefs, dtsObjectName);
         String dtsObjectNamePerformed = performDtsObjectName(dtsObjectName, dtsObjectNamePerformedPre);
         String[] dbTableArray = dtsObjectNamePerformed.split("\\.");
         if (dbTableArray.length == 1) {
@@ -100,10 +105,43 @@ public class CanalJsonUtils {
         if ("DDL".equals(canalJson.getType())) {
             JSONObject afterImages = dtsJsonObject.getJSONObject("afterImages");
             if (afterImages != null && afterImages.containsKey("ddl")) {
-                canalJson.setSql(afterImages.getString("ddl"));
+                String ddlSql = afterImages.getString("ddl");
+                String ddlRegex = ".*TABLE `(\\w*){1}`.*";
+                Pattern ddlPattern = Pattern.compile(ddlRegex);
+                Matcher ddlMatcher = ddlPattern.matcher(ddlSql);
+                String ddlSourceTable = "";
+                while (ddlMatcher.find()) {
+                    ddlSourceTable = ddlMatcher.group(1);
+                }
+                if (StringUtils.isNotBlank(ddlSourceTable)) {
+                    String ddlFlatTable = dtsObjectName + "." + ddlSourceTable;
+                    boolean shouldMonitorTargetFlatTable = shouldMonitorFlatTable(ddlFlatTable, routeDefs);
+                    if (!shouldMonitorTargetFlatTable) {
+                        return null;
+                    }
+                    String ddlSqlPerformed = AbstractDtsToKafkaFlinkAction.convertTableNameIfMatched(flatRouteDefs, ddlFlatTable);
+                    String[] ddlTableArray = ddlSqlPerformed.split("\\.");
+                    if (ddlTableArray.length == 2) {
+                        String ddlTargetTable = ddlTableArray[1];
+                        String ddlSqlAfter = ddlSql.replaceAll(ddlSourceTable, ddlTargetTable);
+                        canalJson.setSql(ddlSqlAfter);
+                    } else {
+                        canalJson.setSql(ddlSql);
+                    }
+                } else {
+                    canalJson.setSql(ddlSql);
+                }
                 canalJson.setIsDdl(true);
             }
+
+            canalJson.setEs(dtsJsonObject.getLong("sourceTimestamp"));
+            setCanalTags(canalJson, dtsJsonObject);
         } else {
+            boolean shouldMonitorTargetFlatTable = shouldMonitorFlatTable(dtsObjectNamePerformed, routeDefs);
+            if (!shouldMonitorTargetFlatTable) {
+                return null;
+            }
+
             HashMap<String, String> extraFieldMap = new HashMap<>();
             String systemOpTs = dtsJsonObject.getString("sourceTimestamp");
             if (systemOpTs != null) {
@@ -176,7 +214,6 @@ public class CanalJsonUtils {
                 put(DTS_FIELDS_DATA_TYPE_NUMBER_KEY, 254);
             }});
 
-
             // 字段类型和字段 SQL 类型映射
             Map<String, Integer> sqlTypeMap = dtsJsonFields.stream().collect(Collectors.toMap(fieldObj -> ((JSONObject) fieldObj).getString("name"), fieldObj -> ((JSONObject) fieldObj).getInteger("dataTypeNumber")));
             canalJson.setSqlType(sqlTypeMap);
@@ -195,29 +232,38 @@ public class CanalJsonUtils {
                     canalJson.setPkNames(pkInfo.getJSONArray("PRIMARY").toJavaList(String.class));
                 }
             }
-
-            HashMap<String, String> dts = new HashMap<>();
-            if (tags != null && tags.containsKey("traceid")) {
-                dts.put("traceid", tags.getString("traceid"));
-            } else {
-                dts.put("traceid", "");
-            }
-            if (tags != null && tags.containsKey("readerThroughoutTime")) {
-                String readerThroughoutTime = tags.getString("readerThroughoutTime");
-                if (readerThroughoutTime != null) {
-                    dts.put("readerThroughoutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Timestamp(Long.valueOf(readerThroughoutTime))));
-                } else {
-                    dts.put("readerThroughoutTime", "");
-                }
-            } else {
-                dts.put("readerThroughoutTime", "");
-            }
-            canalJson.setDts(dts);
-
+            setCanalTags(canalJson, dtsJsonObject);
         }
 
 
         return canalJson;
+    }
+
+    private static void setCanalTags(CanalJson canalJson, JSONObject dtsJsonObject) {
+        JSONObject tags = dtsJsonObject.getJSONObject("tags");
+        Map<String, Map<String, String>> canalTags = new HashMap<>();
+        Map<String, String> dts = new HashMap<>();
+        if (tags != null && tags.containsKey("traceid")) {
+            dts.put("traceid", tags.getString("traceid"));
+        } else {
+            dts.put("traceid", "");
+        }
+        if (tags != null && tags.containsKey("readerThroughoutTime")) {
+            String readerThroughoutTime = tags.getString("readerThroughoutTime");
+            if (readerThroughoutTime != null) {
+                dts.put("readerThroughoutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Timestamp(Long.valueOf(readerThroughoutTime))));
+            } else {
+                dts.put("readerThroughoutTime", "");
+            }
+        } else {
+            dts.put("readerThroughoutTime", "");
+        }
+        canalTags.put("dts", dts);
+        Map<String, String> subscribe = new HashMap<>();
+        subscribe.put("kafkaSinkTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Timestamp(System.currentTimeMillis())));
+        canalTags.put("subscribe", subscribe);
+
+        canalJson.setTags(canalTags);
     }
 
     public static Map<String, String> convertToTypeNameMap(Map<String, Integer> sqlTypeMap) {
@@ -225,7 +271,7 @@ public class CanalJsonUtils {
         for (Map.Entry<String, Integer> entry : sqlTypeMap.entrySet()) {
             String fieldName = entry.getKey();
             Integer typeNumber = entry.getValue();
-            String typeName = typeMap.getOrDefault(typeNumber, "STRING");
+            String typeName = typeMap.getOrDefault(typeNumber, "VARCHAR");
             sqlTypeNameMap.put(fieldName, typeName);
         }
         return sqlTypeNameMap;
@@ -261,4 +307,31 @@ public class CanalJsonUtils {
             return source;
         }
     }
+
+    private static boolean shouldMonitorFlatTable(String flatTable, List<RouteDef> routeDefs) {
+        if (routeDefs == null || routeDefs.isEmpty()) {
+            return true;
+        }
+        for (int i = 0; i < routeDefs.size(); i++) {
+            RouteDef routeDef = routeDefs.get(i);
+            String targetDatabase = routeDef.getTargetDatabase();
+            String includingTargetTables = routeDef.getIncludingTargetTables();
+            String excludingTargetTables = routeDef.getExcludingTargetTables();
+            if (includingTargetTables == null || includingTargetTables.isEmpty()) {
+                includingTargetTables = ".*";
+            } else {
+                includingTargetTables = String.format("(%s).(%s)", targetDatabase, includingTargetTables);
+            }
+            if (excludingTargetTables == null || excludingTargetTables.isEmpty()) {
+                excludingTargetTables = null;
+            } else {
+                excludingTargetTables = String.format("(%s).(%s)", targetDatabase, excludingTargetTables);
+            }
+
+            return AbstractDtsToKafkaFlinkAction.shouldMonitorTable(flatTable, includingTargetTables, excludingTargetTables);
+        }
+        return false;
+    }
+
+
 }

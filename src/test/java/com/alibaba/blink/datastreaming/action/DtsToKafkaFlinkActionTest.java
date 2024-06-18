@@ -2,6 +2,7 @@ package com.alibaba.blink.datastreaming.action;
 
 import com.alibaba.blink.datastreaming.datastream.Dts2CanalJson;
 import com.alibaba.blink.datastreaming.datastream.action.AbstractDtsToKafkaFlinkAction;
+import com.alibaba.blink.datastreaming.datastream.action.FlatRouteDef;
 import com.alibaba.blink.datastreaming.datastream.action.RouteDef;
 import com.alibaba.blink.datastreaming.datastream.canal.CanalJsonUtils;
 import com.alibaba.fastjson2.JSON;
@@ -32,7 +33,8 @@ public class DtsToKafkaFlinkActionTest {
                 String dtsRecordTable = dtsRecord.getString("objectName");
 
                 List<RouteDef> routeDefs = this.routeConfig;
-                String sinkTableName = convertTableNameIfMatched(routeDefs, dtsRecordTable);
+                List<FlatRouteDef> flatRouteDefs = AbstractDtsToKafkaFlinkAction.flatRouteDefs(routeDefs);
+                String sinkTableName = convertTableNameIfMatched(flatRouteDefs, dtsRecordTable);
                 System.out.println(sinkTableName);
                 Assert.equals("test_drds_hzy_pyii.sample_order_real_aeje", sinkTableName);
 

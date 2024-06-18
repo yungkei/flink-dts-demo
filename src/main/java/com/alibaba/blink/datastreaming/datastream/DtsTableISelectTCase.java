@@ -33,7 +33,7 @@ public class DtsTableISelectTCase {
 
         env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        EnvironmentSettings settings = EnvironmentSettings.newInstance().useBlinkPlanner().inStreamingMode().build();
+        EnvironmentSettings settings = EnvironmentSettings.newInstance().build();
 
         tEnv = StreamTableEnvironment.create(env, settings);
 

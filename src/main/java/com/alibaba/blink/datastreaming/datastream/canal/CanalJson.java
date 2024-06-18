@@ -70,14 +70,14 @@ public class CanalJson {
      */
     private String tableChanges;
 
-    private Map<String, String> dts;
+    private Map<String, Map<String, String>> tags;
 
-    public Map<String, String> getDts() {
-        return dts;
+    public Map<String, Map<String, String>> getTags() {
+        return tags;
     }
 
-    public void setDts(Map<String, String> dts) {
-        this.dts = dts;
+    public void setTags(Map<String, Map<String, String>> tags) {
+        this.tags = tags;
     }
 
     public String getType() {
