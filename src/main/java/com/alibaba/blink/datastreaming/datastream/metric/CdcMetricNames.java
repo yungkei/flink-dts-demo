@@ -11,4 +11,7 @@ public class CdcMetricNames {
     public static final String DDL_RECORDS_PER_SECOND = "ddlRecordsPerSecond";
     public static final String DML_RECORDS_PER_SECOND = "dmlRecordsPerSecond";
     public static final String CURRENT_EMIT_EVENT_TIME_LAG = "currentEmitEventTimeLag";
+
+    public static final String MAX_EMIT_EVENT_TIME_LAG = "maxEmitEventTimeLag";
+    public static final String MIN_EMIT_EVENT_TIME_LAG = "minEmitEventTimeLag";
 }

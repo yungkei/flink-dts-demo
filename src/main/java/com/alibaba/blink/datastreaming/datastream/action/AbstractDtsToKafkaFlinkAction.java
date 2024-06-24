@@ -18,6 +18,7 @@ public abstract class AbstractDtsToKafkaFlinkAction extends AbstractFlinkAction 
     protected Integer sinkParallelismConfig;
     protected String includingTablesConfig;
     protected String excludingTablesConfig;
+    protected String extraPrimaryKeys;
 
     private static final String MAP_PARALLELISM = "map-parallelism";
     private static final String SINK_PARALLELISM = "sink-parallelism";
@@ -25,6 +26,7 @@ public abstract class AbstractDtsToKafkaFlinkAction extends AbstractFlinkAction 
     protected HashMap<String, String> extraColumnConfig;
     public static final String INCLUDING_TABLES = "including_tables";
     public static final String EXCLUDING_TABLES = "excluding_tables";
+    public static final String EXTRA_PRIMARYKEY = "extra-primarykeys";
 
     protected String enableDdl;
     private static final String ENABLE_DDL = "enable-ddl";
@@ -50,14 +52,24 @@ public abstract class AbstractDtsToKafkaFlinkAction extends AbstractFlinkAction 
         setIncludingTablesConfig(args);
         setExcludingTablesConfig(args);
         setEnableDdl(args);
+        setExtraPrimarykey(args);
     }
 
     private void setEnableDdl(String[] args) {
-        List<String> mapParallelisms = optionalConfigList(args, ENABLE_DDL, item -> item);
-        if (mapParallelisms == null || mapParallelisms.isEmpty()) {
+        List<String> enableDdls = optionalConfigList(args, ENABLE_DDL, item -> item);
+        if (enableDdls == null || enableDdls.isEmpty()) {
             this.enableDdl = "true";
         } else {
-            this.enableDdl = mapParallelisms.get(0);
+            this.enableDdl = enableDdls.get(0);
+        }
+    }
+
+    private void setExtraPrimarykey(String[] args) {
+        List<String> extraPrimarykeys = optionalConfigList(args, EXTRA_PRIMARYKEY, item -> item);
+        if (extraPrimarykeys == null || extraPrimarykeys.isEmpty()) {
+            this.extraPrimaryKeys = "";
+        } else {
+            this.extraPrimaryKeys = extraPrimarykeys.get(0);
         }
     }
 

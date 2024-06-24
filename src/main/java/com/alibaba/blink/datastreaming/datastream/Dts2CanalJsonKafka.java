@@ -2,6 +2,7 @@ package com.alibaba.blink.datastreaming.datastream;
 
 import com.alibaba.blink.datastreaming.datastream.action.AbstractDtsToKafkaFlinkAction;
 import com.alibaba.blink.datastreaming.datastream.action.RouteDef;
+import com.alibaba.blink.datastreaming.datastream.canal.CanalJson;
 import com.alibaba.blink.datastreaming.datastream.canal.CanalJsonUtils;
 import com.alibaba.blink.datastreaming.datastream.deserialize.ByteRecord;
 import com.alibaba.blink.datastreaming.datastream.deserialize.DtsByteDeserializationSchema;
@@ -20,6 +21,7 @@ import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.metrics.Gauge;
 import org.apache.flink.metrics.Meter;
 import org.apache.flink.metrics.MeterView;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -29,6 +31,7 @@ import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
 import org.apache.flink.streaming.connectors.kafka.internals.KeyedSerializationSchemaWrapper;
 import org.apache.flink.streaming.connectors.kafka.partitioner.FlinkKafkaPartitioner;
 import org.apache.flink.util.Collector;
+import org.apache.kafka.common.metrics.stats.Max;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,7 +53,6 @@ public class Dts2CanalJsonKafka {
             @Override
             public void run() throws Exception {
                 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-                env.enableCheckpointing(10000);
                 List<RouteDef> routeDefs = this.routeConfig;
                 HashMap<String, String> extraColumns = this.extraColumnConfig;
                 String includingTables = this.includingTablesConfig;
@@ -60,6 +62,7 @@ public class Dts2CanalJsonKafka {
                 String prov = extraColumns.getOrDefault("prov", "");
                 String enableDdl = this.enableDdl;
                 String jobName = this.jobName;
+                String currentExtraPrimaryKeys = this.extraPrimaryKeys;
 
                 LOG.info("dts.broker-url:{}", this.sourceConfig.get("broker-url"));
                 LOG.info("dts.topic:{}", this.sourceConfig.get("topic"));
@@ -75,9 +78,36 @@ public class Dts2CanalJsonKafka {
                 LOG.info("sinkParallelism:{}", sinkParallelism);
                 LOG.info("prov:{}", prov);
 
+                Properties sinkProperties = new Properties();
+                String kafkaBootstrapServers = this.sinkConfig.getOrDefault("bootstrap.servers", "");
+                String kafkaTopic = this.sinkConfig.getOrDefault("topic", "");
+                String kafkaGroupId = this.sinkConfig.getOrDefault("group.id", "dts2kafka");
+                String kafkaSecurityProtocol = this.sinkConfig.getOrDefault("security.protocol", "SASL_PLAINTEXT");
+                String kafkaSaslMechanism = this.sinkConfig.getOrDefault("sasl.mechanism", "GSSAPI");
+                String kafkaSaslKerberosServiceName = this.sinkConfig.getOrDefault("sasl.kerberos.service.name", "kafka");
+                String kafkaSaslJaasConfig = this.sinkConfig.getOrDefault("sasl.jaas.config", "");
+                String kafkaBatchSize = this.sinkConfig.getOrDefault("batch.size", "");
+                String kafkaLingerMs = this.sinkConfig.getOrDefault("linger.ms", "");
+                String kafkaBufferMemory = this.sinkConfig.getOrDefault("buffer.memory", "");
+                String kafkaRetries = this.sinkConfig.getOrDefault("retries", "");
+                String kafkaMaxInFlightRequestPerConnection = this.sinkConfig.getOrDefault("max.in.flight.requests.per.connection", "");
+
+                LOG.info("kafka.bootstrap.servers:{}", kafkaBootstrapServers);
+                LOG.info("kafka.topic:{}", kafkaTopic);
+                LOG.info("kafka.group.id:{}", kafkaGroupId);
+                LOG.info("kafka.security.protocol:{}", kafkaSecurityProtocol);
+                LOG.info("kafka.sasl.mechanism:{}", kafkaSaslMechanism);
+                LOG.info("kafka.sasl.kerberos.service.name:{}", kafkaSaslKerberosServiceName);
+                LOG.info("kafka.sasl.jaas.config:{}", kafkaSaslJaasConfig);
+                LOG.info("kafka.batch.size:{}", kafkaBatchSize);
+                LOG.info("kafka.linger.ms:{}", kafkaLingerMs);
+                LOG.info("kafka.buffer.memory:{}", kafkaBufferMemory);
+
                 DataStream<String> input = env.addSource(new FlinkDtsRawConsumer(this.sourceConfig.get("broker-url"), this.sourceConfig.get("topic"), this.sourceConfig.get("sid"), this.sourceConfig.get("group"), this.sourceConfig.get("user"), this.sourceConfig.get("password"), Long.parseLong(this.sourceConfig.get("startupOffsetsTimestamp")), new DtsByteDeserializationSchema(), null)).name("Dts").flatMap(new RichFlatMapFunction<ByteRecord, String>() {
                     public static final long UNDEFINED = -1L;
                     private transient long currentEmitEventTimeLag;
+                    private transient long maxEmitEventTimeLag = Long.MIN_VALUE;
+                    private transient long minEmitEventTimeLag = Long.MAX_VALUE;
                     private transient Meter cdcRecordsPerSecond;
                     private transient Meter insertRecordsPerSecond;
                     private transient Meter deleteRecordsPerSecond;
@@ -85,10 +115,32 @@ public class Dts2CanalJsonKafka {
                     private transient Meter ddlRecordsPerSecond;
                     private transient Meter dmlRecordsPerSecond;
 
-
                     @Override
                     public void open(Configuration config) {
                         getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.CURRENT_EMIT_EVENT_TIME_LAG, () -> this.currentEmitEventTimeLag);
+                        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MAX_EMIT_EVENT_TIME_LAG, new Gauge<Long>() {
+                            @Override
+                            public Long getValue() {
+                                long value = maxEmitEventTimeLag;
+                                if (value == Long.MIN_VALUE) {
+                                    return 0L;
+                                }
+                                maxEmitEventTimeLag = Long.MIN_VALUE;
+                                return value;
+                            }
+                        });
+                        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MIN_EMIT_EVENT_TIME_LAG, new Gauge<Long>() {
+                            @Override
+                            public Long getValue() {
+                                long value = minEmitEventTimeLag;
+                                if (value == Long.MAX_VALUE) {
+                                    return 0L;
+                                }
+                                minEmitEventTimeLag = Long.MAX_VALUE;
+                                return value;
+                            }
+                        });
+
                         this.cdcRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.CDC_RECORDS_PER_SECOND, new MeterView(1));
                         this.insertRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.INSERT_RECORDS_PER_SECOND, new MeterView(1));
                         this.deleteRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.DELETE_RECORDS_PER_SECOND, new MeterView(1));
@@ -121,15 +173,9 @@ public class Dts2CanalJsonKafka {
                         }
                     }
 
-                    private void setMetric(JSONObject dtsRecord) {
+                    private void setInputMetric(JSONObject dtsRecord) {
                         try {
                             this.cdcRecordsPerSecond.markEvent();
-                        } catch (Exception e) {
-                            LOG.warn("flatmap.setMetric-{} error:", CdcMetricNames.CDC_RECORDS_PER_SECOND, e);
-                        }
-                        try {
-                            String operation = dtsRecord.getString("operation");
-                            setMetricGenericRecordsPerSecond(operation);
                         } catch (Exception e) {
                             LOG.warn("flatmap.setMetric-{} error:", CdcMetricNames.CDC_RECORDS_PER_SECOND, e);
                         }
@@ -137,10 +183,22 @@ public class Dts2CanalJsonKafka {
                             String opTsString = dtsRecord.getString("sourceTimestamp");
                             if (opTsString != null) {
                                 long opTs = new Timestamp(Long.valueOf(opTsString)).getTime();
-                                currentEmitEventTimeLag = currentEmitEventTimeLag != TimestampAssigner.NO_TIMESTAMP ? System.currentTimeMillis() - opTs * 1000 : UNDEFINED;
+                                this.currentEmitEventTimeLag = opTs != TimestampAssigner.NO_TIMESTAMP ? System.currentTimeMillis() - opTs * 1000 : UNDEFINED;
+                                this.maxEmitEventTimeLag = Math.max(currentEmitEventTimeLag, maxEmitEventTimeLag);
+                                this.minEmitEventTimeLag = Math.min(currentEmitEventTimeLag, minEmitEventTimeLag);
+
                             }
                         } catch (Exception e) {
-                            LOG.warn("flatmap.setMetric-{} error:", CdcMetricNames.CURRENT_EMIT_EVENT_TIME_LAG, e);
+                            LOG.warn("flatmap.setInputMetric-{} error:", CdcMetricNames.CURRENT_EMIT_EVENT_TIME_LAG, e);
+                        }
+                    }
+
+                    private void setOutputMetric(JSONObject dtsRecord) {
+                        try {
+                            String operation = dtsRecord.getString("operation");
+                            setMetricGenericRecordsPerSecond(operation);
+                        } catch (Exception e) {
+                            LOG.warn("flatmap.setOutputMetric-{} error:", CdcMetricNames.CDC_RECORDS_PER_SECOND, e);
                         }
                     }
 
@@ -156,7 +214,7 @@ public class Dts2CanalJsonKafka {
                                 LOG.error("record.getJson error:", e);
                                 return;
                             }
-                            setMetric(dtsJson);
+                            setInputMetric(dtsJson);
                             if (OperationType.INSERT == record.getOperationType() || OperationType.UPDATE == record.getOperationType() || OperationType.DELETE == record.getOperationType() || (OperationType.DDL == record.getOperationType() && "true".equals(enableDdl))) {
                                 String dtsObjectName = dtsJson.getString("objectName");
                                 if (!shouldMonitorTable(dtsObjectName, includingTables, excludingTables)) {
@@ -165,9 +223,14 @@ public class Dts2CanalJsonKafka {
                                 LOG.debug("Source table '{}' is included.", dtsObjectName);
                                 LOG.debug("dtsJson:{}", dtsJson);
                                 try {
-                                    String canalJson = JSON.toJSONString(CanalJsonUtils.convert(dtsJson, routeDefs, extraColumns), JSONWriter.Feature.WriteMapNullValue);
+                                    CanalJson canalJson = CanalJsonUtils.convert(dtsJson, routeDefs, extraColumns, currentExtraPrimaryKeys);
+                                    if (canalJson == null) {
+                                        return;
+                                    }
+                                    String canalJsonStr = JSON.toJSONString(canalJson, JSONWriter.Feature.WriteMapNullValue);
                                     LOG.debug("canalJson:{}", canalJson);
-                                    out.collect(canalJson);
+                                    setOutputMetric(dtsJson);
+                                    out.collect(canalJsonStr);
                                 } catch (Exception ex) {
                                     LOG.warn("parse dts {} to canal failed :", record, ex);
                                 }
@@ -175,23 +238,6 @@ public class Dts2CanalJsonKafka {
                         }
                     }
                 }).returns(Types.STRING).setParallelism(mapParallelism);
-
-                Properties sinkProperties = new Properties();
-                String kafkaBootstrapServers = this.sinkConfig.getOrDefault("bootstrap.servers", "");
-                String kafkaTopic = this.sinkConfig.getOrDefault("topic", "");
-                String kafkaGroupId = this.sinkConfig.getOrDefault("group.id", "dts2kafka");
-                String kafkaSecurityProtocol = this.sinkConfig.getOrDefault("security.protocol", "SASL_PLAINTEXT");
-                String kafkaSaslMechanism = this.sinkConfig.getOrDefault("sasl.mechanism", "GSSAPI");
-                String kafkaSaslKerberosServiceName = this.sinkConfig.getOrDefault("sasl.kerberos.service.name", "kafka");
-                String kafkaSaslJaasConfig = this.sinkConfig.getOrDefault("sasl.jaas.config", "");
-
-                LOG.info("kafka.bootstrap.servers:{}", kafkaBootstrapServers);
-                LOG.info("kafka.topic:{}", kafkaTopic);
-                LOG.info("kafka.group.id:{}", kafkaGroupId);
-                LOG.info("kafka.security.protocol:{}", kafkaSecurityProtocol);
-                LOG.info("kafka.sasl.mechanism:{}", kafkaSaslMechanism);
-                LOG.info("kafka.sasl.kerberos.service.name:{}", kafkaSaslKerberosServiceName);
-                LOG.info("kafka.sasl.jaas.config:{}", kafkaSaslJaasConfig);
 
                 if (StringUtils.isBlank(kafkaTopic)) {
                     input.addSink(new PrintSinkFunction<>()).name("Print").setParallelism(sinkParallelism);
@@ -206,6 +252,21 @@ public class Dts2CanalJsonKafka {
                 sinkProperties.setProperty("sasl.kerberos.service.name", kafkaSaslKerberosServiceName);
                 if (StringUtils.isNotBlank(kafkaSaslJaasConfig)) {
                     sinkProperties.setProperty("sasl.jaas.config", kafkaSaslJaasConfig);
+                }
+                if (StringUtils.isNotBlank(kafkaBatchSize)) {
+                    sinkProperties.setProperty("batch.size", kafkaBatchSize);
+                }
+                if (StringUtils.isNotBlank(kafkaLingerMs)) {
+                    sinkProperties.setProperty("linger.ms", kafkaLingerMs);
+                }
+                if (StringUtils.isNotBlank(kafkaBufferMemory)) {
+                    sinkProperties.setProperty("buffer.memory", kafkaBufferMemory);
+                }
+                if (StringUtils.isNotBlank(kafkaRetries)) {
+                    sinkProperties.setProperty("retries", kafkaRetries);
+                }
+                if (StringUtils.isNotBlank(kafkaMaxInFlightRequestPerConnection)) {
+                    sinkProperties.setProperty("max.in.flight.requests.per.connection", kafkaMaxInFlightRequestPerConnection);
                 }
                 FlinkKafkaProducer<String> kafkaProducer = new FlinkKafkaProducer<>(kafkaTopic, new KeyedSerializationSchemaWrapper<>(new SimpleStringSchema()), sinkProperties, Optional.of(new FlinkKafkaPartitioner<String>() {
                     @Override

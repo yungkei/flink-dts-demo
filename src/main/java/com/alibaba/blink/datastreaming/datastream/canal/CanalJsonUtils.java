@@ -80,10 +80,10 @@ public class CanalJsonUtils {
     }
 
     public static CanalJson convert(JSONObject dtsJsonObject) {
-        return convert(dtsJsonObject, null, null);
+        return convert(dtsJsonObject, null, null, null);
     }
 
-    public static CanalJson convert(JSONObject dtsJsonObject, List<RouteDef> routeDefs, HashMap<String, String> extraColumns) {
+    public static CanalJson convert(JSONObject dtsJsonObject, List<RouteDef> routeDefs, HashMap<String, String> extraColumns, String extraPrimaryKeys) {
         CanalJson canalJson = new CanalJson();
         canalJson.setType(dtsJsonObject.getString("operation")); // 假定 operation 字段即代表了 DTS 操作类型 UPDATE, INSERT 等
         canalJson.setId(dtsJsonObject.getLong("id"));
@@ -229,7 +229,14 @@ public class CanalJsonUtils {
             if (tags != null && tags.containsKey("pk_uk_info")) {
                 JSONObject pkInfo = JSON.parseObject(tags.getString("pk_uk_info"));
                 if (pkInfo != null && pkInfo.containsKey("PRIMARY")) {
-                    canalJson.setPkNames(pkInfo.getJSONArray("PRIMARY").toJavaList(String.class));
+                    List<String> pkNames = pkInfo.getJSONArray("PRIMARY").toJavaList(String.class);
+                    if (StringUtils.isNotBlank(extraPrimaryKeys)) {
+                        String[] extraPrimaryKeyArray = extraPrimaryKeys.split(",");
+                        for (int ei = 0; ei < extraPrimaryKeyArray.length; ei++) {
+                            pkNames.add(extraPrimaryKeyArray[ei]);
+                        }
+                    }
+                    canalJson.setPkNames(pkNames);
                 }
             }
             setCanalTags(canalJson, dtsJsonObject);
