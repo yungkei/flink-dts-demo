@@ -31,7 +31,6 @@ import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
 import org.apache.flink.streaming.connectors.kafka.internals.KeyedSerializationSchemaWrapper;
 import org.apache.flink.streaming.connectors.kafka.partitioner.FlinkKafkaPartitioner;
 import org.apache.flink.util.Collector;
-import org.apache.kafka.common.metrics.stats.Max;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -123,7 +122,7 @@ public class Dts2CanalJsonKafka {
                             public Long getValue() {
                                 long value = maxEmitEventTimeLag;
                                 if (value == Long.MIN_VALUE) {
-                                    return 0L;
+                                    return currentEmitEventTimeLag;
                                 }
                                 maxEmitEventTimeLag = Long.MIN_VALUE;
                                 return value;
@@ -134,7 +133,7 @@ public class Dts2CanalJsonKafka {
                             public Long getValue() {
                                 long value = minEmitEventTimeLag;
                                 if (value == Long.MAX_VALUE) {
-                                    return 0L;
+                                    return currentEmitEventTimeLag;
                                 }
                                 minEmitEventTimeLag = Long.MAX_VALUE;
                                 return value;
