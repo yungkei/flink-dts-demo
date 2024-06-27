@@ -19,6 +19,7 @@ public abstract class AbstractDtsToKafkaFlinkAction extends AbstractFlinkAction 
     protected String includingTablesConfig;
     protected String excludingTablesConfig;
     protected String extraPrimaryKeys;
+    protected String enablePartitionUpdatePerform;
 
     private static final String MAP_PARALLELISM = "map-parallelism";
     private static final String SINK_PARALLELISM = "sink-parallelism";
@@ -27,6 +28,7 @@ public abstract class AbstractDtsToKafkaFlinkAction extends AbstractFlinkAction 
     public static final String INCLUDING_TABLES = "including_tables";
     public static final String EXCLUDING_TABLES = "excluding_tables";
     public static final String EXTRA_PRIMARYKEY = "extra-primarykeys";
+    public static final String ENABLE_PARTITION_UPDATE_PERFORM = "enablePartitionUpdatePerform";
 
     protected String enableDdl;
     private static final String ENABLE_DDL = "enable-ddl";
@@ -53,6 +55,7 @@ public abstract class AbstractDtsToKafkaFlinkAction extends AbstractFlinkAction 
         setExcludingTablesConfig(args);
         setEnableDdl(args);
         setExtraPrimarykey(args);
+        setEnablePartitionUpdatePerform(args);
     }
 
     private void setEnableDdl(String[] args) {
@@ -61,6 +64,15 @@ public abstract class AbstractDtsToKafkaFlinkAction extends AbstractFlinkAction 
             this.enableDdl = "true";
         } else {
             this.enableDdl = enableDdls.get(0);
+        }
+    }
+
+    private void setEnablePartitionUpdatePerform(String[] args) {
+        List<String> enablePartitionUpdatePerforms = optionalConfigList(args, ENABLE_PARTITION_UPDATE_PERFORM, item -> item);
+        if (enablePartitionUpdatePerforms == null || enablePartitionUpdatePerforms.isEmpty()) {
+            this.enablePartitionUpdatePerform = "false";
+        } else {
+            this.enablePartitionUpdatePerform = enablePartitionUpdatePerforms.get(0);
         }
     }
 

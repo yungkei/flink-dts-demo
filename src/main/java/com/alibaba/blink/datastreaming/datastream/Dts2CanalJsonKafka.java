@@ -1,9 +1,11 @@
 package com.alibaba.blink.datastreaming.datastream;
 
 import com.alibaba.blink.datastreaming.datastream.action.AbstractDtsToKafkaFlinkAction;
+import com.alibaba.blink.datastreaming.datastream.action.DrdsCdcProcessFunction;
 import com.alibaba.blink.datastreaming.datastream.action.RouteDef;
 import com.alibaba.blink.datastreaming.datastream.canal.CanalJson;
 import com.alibaba.blink.datastreaming.datastream.canal.CanalJsonUtils;
+import com.alibaba.blink.datastreaming.datastream.canal.CanalJsonWrapper;
 import com.alibaba.blink.datastreaming.datastream.deserialize.ByteRecord;
 import com.alibaba.blink.datastreaming.datastream.deserialize.DtsByteDeserializationSchema;
 import com.alibaba.blink.datastreaming.datastream.deserialize.JsonDtsRecord;
@@ -19,18 +21,21 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.common.eventtime.TimestampAssigner;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Gauge;
 import org.apache.flink.metrics.Meter;
 import org.apache.flink.metrics.MeterView;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.streaming.api.functions.sink.PrintSinkFunction;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
 import org.apache.flink.streaming.connectors.kafka.internals.KeyedSerializationSchemaWrapper;
 import org.apache.flink.streaming.connectors.kafka.partitioner.FlinkKafkaPartitioner;
 import org.apache.flink.util.Collector;
+import org.apache.flink.util.OutputTag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,6 +67,7 @@ public class Dts2CanalJsonKafka {
                 String enableDdl = this.enableDdl;
                 String jobName = this.jobName;
                 String currentExtraPrimaryKeys = this.extraPrimaryKeys;
+                String enablePartitionUpdatePerform = this.enablePartitionUpdatePerform;
 
                 LOG.info("dts.broker-url:{}", this.sourceConfig.get("broker-url"));
                 LOG.info("dts.topic:{}", this.sourceConfig.get("topic"));
@@ -102,7 +108,7 @@ public class Dts2CanalJsonKafka {
                 LOG.info("kafka.linger.ms:{}", kafkaLingerMs);
                 LOG.info("kafka.buffer.memory:{}", kafkaBufferMemory);
 
-                DataStream<String> input = env.addSource(new FlinkDtsRawConsumer(this.sourceConfig.get("broker-url"), this.sourceConfig.get("topic"), this.sourceConfig.get("sid"), this.sourceConfig.get("group"), this.sourceConfig.get("user"), this.sourceConfig.get("password"), Long.parseLong(this.sourceConfig.get("startupOffsetsTimestamp")), new DtsByteDeserializationSchema(), null)).name("Dts").flatMap(new RichFlatMapFunction<ByteRecord, String>() {
+                DataStream<CanalJsonWrapper> input = env.addSource(new FlinkDtsRawConsumer(this.sourceConfig.get("broker-url"), this.sourceConfig.get("topic"), this.sourceConfig.get("sid"), this.sourceConfig.get("group"), this.sourceConfig.get("user"), this.sourceConfig.get("password"), Long.parseLong(this.sourceConfig.get("startupOffsetsTimestamp")), new DtsByteDeserializationSchema(), null)).name("Dts").flatMap(new RichFlatMapFunction<ByteRecord, CanalJsonWrapper>() {
                     public static final long UNDEFINED = -1L;
                     private transient long currentEmitEventTimeLag;
                     private transient long maxEmitEventTimeLag = Long.MIN_VALUE;
@@ -113,6 +119,13 @@ public class Dts2CanalJsonKafka {
                     private transient Meter updateRecordsPerSecond;
                     private transient Meter ddlRecordsPerSecond;
                     private transient Meter dmlRecordsPerSecond;
+
+                    private transient Counter cdcRecordsCount;
+                    private transient Counter insertRecordsCount;
+                    private transient Counter updateRecordsCount;
+                    private transient Counter deleteRecordsCount;
+                    private transient Counter ddlRecordsCount;
+                    private transient Counter dmlRecordsCount;
 
                     @Override
                     public void open(Configuration config) {
@@ -146,27 +159,42 @@ public class Dts2CanalJsonKafka {
                         this.updateRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.UPDATE_RECORDS_PER_SECOND, new MeterView(1));
                         this.ddlRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.DDL_RECORDS_PER_SECOND, new MeterView(1));
                         this.dmlRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.DML_RECORDS_PER_SECOND, new MeterView(1));
+
+                        this.cdcRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.CDC_RECORDS_COUNT);
+                        this.insertRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.INSERT_RECORDS_COUNT);
+                        this.deleteRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.DELETE_RECORDS_COUNT);
+                        this.updateRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.UPDATE_RECORDS_COUNT);
+                        this.ddlRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.DDL_RECORDS_COUNT);
+                        this.dmlRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.DML_RECORDS_COUNT);
+
                     }
 
                     private void setMetricGenericRecordsPerSecond(String type) {
                         switch (type) {
                             case "INSERT": {
                                 this.insertRecordsPerSecond.markEvent();
+                                this.insertRecordsCount.inc();
                                 this.dmlRecordsPerSecond.markEvent();
+                                this.dmlRecordsCount.inc();
                                 break;
                             }
                             case "DELETE": {
                                 this.deleteRecordsPerSecond.markEvent();
+                                this.deleteRecordsCount.inc();
                                 this.dmlRecordsPerSecond.markEvent();
+                                this.dmlRecordsCount.inc();
                                 break;
                             }
                             case "UPDATE": {
                                 this.updateRecordsPerSecond.markEvent();
+                                this.updateRecordsCount.inc();
                                 this.dmlRecordsPerSecond.markEvent();
+                                this.dmlRecordsCount.inc();
                                 break;
                             }
                             case "DDL": {
                                 this.ddlRecordsPerSecond.markEvent();
+                                this.ddlRecordsCount.inc();
                                 break;
                             }
                         }
@@ -175,6 +203,7 @@ public class Dts2CanalJsonKafka {
                     private void setInputMetric(JSONObject dtsRecord) {
                         try {
                             this.cdcRecordsPerSecond.markEvent();
+                            this.cdcRecordsCount.inc();
                         } catch (Exception e) {
                             LOG.warn("flatmap.setMetric-{} error:", CdcMetricNames.CDC_RECORDS_PER_SECOND, e);
                         }
@@ -202,7 +231,7 @@ public class Dts2CanalJsonKafka {
                     }
 
                     @Override
-                    public void flatMap(ByteRecord byteRecord, Collector<String> out) throws Exception {
+                    public void flatMap(ByteRecord byteRecord, Collector<CanalJsonWrapper> out) throws Exception {
                         if (byteRecord != null) {
                             JsonDtsRecord record;
                             JSONObject dtsJson;
@@ -214,6 +243,7 @@ public class Dts2CanalJsonKafka {
                                 return;
                             }
                             setInputMetric(dtsJson);
+
                             if (OperationType.INSERT == record.getOperationType() || OperationType.UPDATE == record.getOperationType() || OperationType.DELETE == record.getOperationType() || (OperationType.DDL == record.getOperationType() && "true".equals(enableDdl))) {
                                 String dtsObjectName = dtsJson.getString("objectName");
                                 if (!shouldMonitorTable(dtsObjectName, includingTables, excludingTables)) {
@@ -226,20 +256,45 @@ public class Dts2CanalJsonKafka {
                                     if (canalJson == null) {
                                         return;
                                     }
-                                    String canalJsonStr = JSON.toJSONString(canalJson, JSONWriter.Feature.WriteMapNullValue);
                                     LOG.debug("canalJson:{}", canalJson);
                                     setOutputMetric(dtsJson);
-                                    out.collect(canalJsonStr);
+                                    out.collect(DrdsCdcProcessFunction.createCanalJsonWrapper(canalJson));
                                 } catch (Exception ex) {
                                     LOG.warn("parse dts {} to canal failed :", record, ex);
                                 }
                             }
                         }
                     }
-                }).returns(Types.STRING).setParallelism(mapParallelism);
+                }).setParallelism(mapParallelism);
+
+                if ("true".equalsIgnoreCase(enablePartitionUpdatePerform)) {
+                    final OutputTag<CanalJsonWrapper> stateOutputTag = new OutputTag<CanalJsonWrapper>("state-output") {
+                    };
+                    final OutputTag<CanalJsonWrapper> passThroughOutputTag = new OutputTag<CanalJsonWrapper>("pass-through-output") {
+                    };
+
+                    SingleOutputStreamOperator<CanalJsonWrapper> mainDataStream = input.process(new ProcessFunction<CanalJsonWrapper, CanalJsonWrapper>() {
+                        @Override
+                        public void processElement(CanalJsonWrapper s, ProcessFunction<CanalJsonWrapper, CanalJsonWrapper>.Context context, Collector<CanalJsonWrapper> collector) {
+                            if (DrdsCdcProcessFunction.shouldAdditionalProcess(s)) {
+                                context.output(stateOutputTag, s);
+                            } else {
+                                context.output(passThroughOutputTag, s);
+                            }
+                        }
+                    });
+
+                    DataStream<CanalJsonWrapper> passThroughStream = mainDataStream.getSideOutput(passThroughOutputTag);
+                    DataStream<CanalJsonWrapper> stateStream = mainDataStream.getSideOutput(stateOutputTag)
+                            .keyBy(value -> DrdsCdcProcessFunction.generateStateKey(value))
+                            .process(new DrdsCdcProcessFunction());
+                    input = stateStream.union(passThroughStream);
+                }
+
+                DataStream<String> output = input.map(item -> JSON.toJSONString(item.getCanalJson(), JSONWriter.Feature.WriteMapNullValue)).returns(String.class);
 
                 if (StringUtils.isBlank(kafkaTopic)) {
-                    input.addSink(new PrintSinkFunction<>()).name("Print").setParallelism(sinkParallelism);
+                    output.addSink(new PrintSinkFunction<>()).name("Print").setParallelism(sinkParallelism);
                     env.execute("Dts2Canal-" + jobName);
                     return;
                 }
@@ -280,7 +335,7 @@ public class Dts2CanalJsonKafka {
                     }
                 }));
 
-                input.addSink(kafkaProducer).name("Kafka").setParallelism(sinkParallelism);
+                output.addSink(kafkaProducer).name("Kafka").setParallelism(sinkParallelism);
 
                 env.execute(jobName);
             }
