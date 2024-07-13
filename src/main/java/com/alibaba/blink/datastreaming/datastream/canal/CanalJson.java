@@ -199,4 +199,26 @@ public class CanalJson {
     public void setSchema(String schema) {
         this.schema = schema;
     }
+
+    @Override
+    public String toString() {
+        return "CanalJson{" +
+                "type='" + type + '\'' +
+                ", id=" + id +
+                ", old=" + old +
+                ", data=" + data +
+                ", database='" + database + '\'' +
+                ", schema='" + schema + '\'' +
+                ", table='" + table + '\'' +
+                ", mysqlType=" + mysqlType +
+                ", sqlType=" + sqlType +
+                ", isDdl=" + isDdl +
+                ", pkNames=" + pkNames +
+                ", es=" + es +
+                ", ts=" + ts +
+                ", sql='" + sql + '\'' +
+                ", tableChanges='" + tableChanges + '\'' +
+                ", tags=" + tags +
+                '}';
+    }
 }

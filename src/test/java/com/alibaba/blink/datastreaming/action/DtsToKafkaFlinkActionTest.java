@@ -78,7 +78,7 @@ public class DtsToKafkaFlinkActionTest {
                 DataStream<String> input = env.fromCollection(Collections.singleton(dtsRecord.toString()))
                         .map(dtsRecord -> {
                             if (dtsRecord != null) {
-                                return JSON.toJSONString(CanalJsonUtils.convert(JSONObject.parseObject(dtsRecord), routeDefs, extraColumns, null));
+                                return JSON.toJSONString(CanalJsonUtils.convert(JSONObject.parseObject(dtsRecord), routeDefs, extraColumns, null, "false"));
                             }
                             return null;
                         }).filter((FilterFunction<String>) record -> {

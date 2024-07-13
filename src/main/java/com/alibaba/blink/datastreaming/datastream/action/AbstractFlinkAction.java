@@ -10,11 +10,13 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.function.Function;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 public abstract class AbstractFlinkAction {
     private static final Logger LOG = LoggerFactory.getLogger(AbstractFlinkAction.class);
 
     protected HashMap<String, String> sourceConfig;
+    protected List<HashMap<String, String>> dynamicSourceConfig;
     protected HashMap<String, String> sinkConfig;
     protected List<RouteDef> routeConfig;
     protected String jobName;
@@ -39,12 +41,32 @@ public abstract class AbstractFlinkAction {
         setRouteConfig(args);
         setExtraConfig(args);
         setJobName(args);
+        setDynamicSourceConfig(args, getSourceIdentifier());
     }
 
     abstract void setExtraConfig(String[] args);
 
     protected void setSourceConfig(String[] args, String key) {
         this.sourceConfig = optionalConfigMap(args, key);
+    }
+
+    protected void setDynamicSourceConfig(String[] args, String key) {
+        this.dynamicSourceConfig = new ArrayList<>();
+        if (this.sourceConfig != null && !this.sourceConfig.isEmpty()) {
+            this.sourceConfig.put("name", "dts");
+            dynamicSourceConfig.add(this.sourceConfig);
+        }
+        List<String> configMapKeys = getConfigMapKeysBeginWith(args, key);
+        if (configMapKeys != null && !configMapKeys.isEmpty()) {
+            for (int i = 0; i < configMapKeys.size(); i++) {
+                String configMapKey = configMapKeys.get(i);
+                if (StringUtils.isNotBlank(configMapKey)) {
+                    HashMap<String, String> config = optionalConfigMap(args, configMapKey);
+                    config.put("name", configMapKey.substring(key.length() + 1));
+                    dynamicSourceConfig.add(config);
+                }
+            }
+        }
     }
 
     protected void setSinkConfig(String[] args, String key) {
@@ -70,6 +92,21 @@ public abstract class AbstractFlinkAction {
         HashMap<String, String> configMap = new HashMap<>();
         parseKeyValueString(configMap, kvCollection);
         return configMap;
+    }
+
+    protected List<String> getConfigMapKeysBeginWith(String[] args, String key) {
+        MultipleParameterTool mpTool = MultipleParameterTool.fromArgs(args);
+        Collection<String> parameters = mpTool.getUnrequestedParameters();
+        List<String> matchedParameters = new ArrayList<>();
+        if (parameters != null && !parameters.isEmpty()) {
+            matchedParameters = parameters.stream().filter(item -> {
+                if (StringUtils.isBlank(item)) {
+                    return false;
+                }
+                return item.startsWith(key + ".");
+            }).collect(Collectors.toList());
+        }
+        return matchedParameters;
     }
 
     private static void parseKeyValueString(Map<String, String> map, Collection<String> kvCollection) {

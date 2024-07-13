@@ -1,31 +1,18 @@
 package com.alibaba.blink.datastreaming.datastream;
 
-import com.alibaba.blink.datastreaming.datastream.action.AbstractDtsToKafkaFlinkAction;
-import com.alibaba.blink.datastreaming.datastream.action.DrdsCdcProcessFunction;
-import com.alibaba.blink.datastreaming.datastream.action.RouteDef;
+import com.alibaba.blink.datastreaming.datastream.action.*;
 import com.alibaba.blink.datastreaming.datastream.canal.CanalJson;
-import com.alibaba.blink.datastreaming.datastream.canal.CanalJsonUtils;
 import com.alibaba.blink.datastreaming.datastream.canal.CanalJsonWrapper;
-import com.alibaba.blink.datastreaming.datastream.deserialize.ByteRecord;
 import com.alibaba.blink.datastreaming.datastream.deserialize.DtsByteDeserializationSchema;
-import com.alibaba.blink.datastreaming.datastream.deserialize.JsonDtsRecord;
-import com.alibaba.blink.datastreaming.datastream.metric.CdcMetricNames;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.alibaba.fastjson2.JSONWriter;
 import com.alibaba.flink.connectors.dts.FlinkDtsRawConsumer;
-import com.aliyun.dts.subscribe.clients.record.OperationType;
-import com.aliyun.dts.subscribe.clients.recordgenerator.AvroDeserializer;
 import com.google.common.hash.Hashing;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.flink.api.common.eventtime.TimestampAssigner;
-import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.metrics.Counter;
-import org.apache.flink.metrics.Gauge;
-import org.apache.flink.metrics.Meter;
-import org.apache.flink.metrics.MeterView;
+import org.apache.flink.runtime.state.StateBackend;
+import org.apache.flink.runtime.state.memory.MemoryStateBackend;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -41,17 +28,15 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Optional;
-import java.util.Properties;
+import java.text.SimpleDateFormat;
+import java.time.Duration;
+import java.util.*;
 
 public class Dts2CanalJsonKafka {
     private static final Logger LOG = LoggerFactory.getLogger(Dts2CanalJsonKafka.class);
 
     public static void main(String[] args) throws Exception {
         LOG.info("flink:Dts2CanalJsonKafka");
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         AbstractDtsToKafkaFlinkAction flinkAction = new AbstractDtsToKafkaFlinkAction() {
             @Override
@@ -68,20 +53,37 @@ public class Dts2CanalJsonKafka {
                 String jobName = this.jobName;
                 String currentExtraPrimaryKeys = this.extraPrimaryKeys;
                 String enablePartitionUpdatePerform = this.enablePartitionUpdatePerform;
+                long partitionUpdatePerformsStateTtl = this.partitionUpdatePerformsStateTtl;
+                long partitionUpdatePerformsTimerTimeInternalMs = this.partitionUpdatePerformsTimerTimeInternalMs;
+                int memoryStateMaxSize = this.memoryStateMaxSize;
+                String mapToString = this.mapToString;
 
-                LOG.info("dts.broker-url:{}", this.sourceConfig.get("broker-url"));
-                LOG.info("dts.topic:{}", this.sourceConfig.get("topic"));
-                LOG.info("dts.sid:{}", this.sourceConfig.get("sid"));
-                LOG.info("dts.group:{}", this.sourceConfig.get("group"));
-                LOG.info("dts.user:{}", this.sourceConfig.get("user"));
-                LOG.info("dts.password:{}", this.sourceConfig.get("password"));
-                LOG.info("dts.startupOffsetsTimestamp:{}", this.sourceConfig.get("startupOffsetsTimestamp"));
+                String dtsBrokerUrl = this.sourceConfig.get("broker-url");
+                String dtsTopic = this.sourceConfig.get("topic");
+                String dtsSid = this.sourceConfig.get("sid");
+                String dtsGroup = this.sourceConfig.get("group");
+                String dtsUser = this.sourceConfig.get("user");
+                String dtsPassword = this.sourceConfig.get("password");
+                String dtsStartupOffsetsTimestamp = this.sourceConfig.get("startupOffsetsTimestamp");
+
+                LOG.info("dts.broker-url:{}", dtsBrokerUrl);
+                LOG.info("dts.topic:{}", dtsTopic);
+                LOG.info("dts.sid:{}", dtsSid);
+                LOG.info("dts.group:{}", dtsGroup);
+                LOG.info("dts.user:{}", dtsUser);
+                LOG.info("dts.password:{}", dtsPassword);
+                LOG.info("dts.startupOffsetsTimestamp:{}", dtsStartupOffsetsTimestamp);
 
                 LOG.info("includingTables:{}", includingTables);
                 LOG.info("excludingTables:{}", excludingTables);
                 LOG.info("mapParallelism:{}", mapParallelism);
                 LOG.info("sinkParallelism:{}", sinkParallelism);
                 LOG.info("prov:{}", prov);
+                LOG.info("enablePartitionUpdatePerform:{}", enablePartitionUpdatePerform);
+                LOG.info("partitionUpdatePerformsStateTtl:{}", partitionUpdatePerformsStateTtl);
+                LOG.info("partitionUpdatePerformsTimerTimeInternalMs:{}", partitionUpdatePerformsTimerTimeInternalMs);
+                LOG.info("memoryStateMaxSize:{}", memoryStateMaxSize);
+                LOG.info("mapToString:{}", mapToString);
 
                 Properties sinkProperties = new Properties();
                 String kafkaBootstrapServers = this.sinkConfig.getOrDefault("bootstrap.servers", "");
@@ -96,6 +98,7 @@ public class Dts2CanalJsonKafka {
                 String kafkaBufferMemory = this.sinkConfig.getOrDefault("buffer.memory", "");
                 String kafkaRetries = this.sinkConfig.getOrDefault("retries", "");
                 String kafkaMaxInFlightRequestPerConnection = this.sinkConfig.getOrDefault("max.in.flight.requests.per.connection", "");
+                String kafkaPartition = this.sinkConfig.get("partition");
 
                 LOG.info("kafka.bootstrap.servers:{}", kafkaBootstrapServers);
                 LOG.info("kafka.topic:{}", kafkaTopic);
@@ -107,165 +110,59 @@ public class Dts2CanalJsonKafka {
                 LOG.info("kafka.batch.size:{}", kafkaBatchSize);
                 LOG.info("kafka.linger.ms:{}", kafkaLingerMs);
                 LOG.info("kafka.buffer.memory:{}", kafkaBufferMemory);
+                LOG.info("kafka.partition:{}", kafkaPartition);
 
-                DataStream<CanalJsonWrapper> input = env.addSource(new FlinkDtsRawConsumer(this.sourceConfig.get("broker-url"), this.sourceConfig.get("topic"), this.sourceConfig.get("sid"), this.sourceConfig.get("group"), this.sourceConfig.get("user"), this.sourceConfig.get("password"), Long.parseLong(this.sourceConfig.get("startupOffsetsTimestamp")), new DtsByteDeserializationSchema(), null)).name("Dts").flatMap(new RichFlatMapFunction<ByteRecord, CanalJsonWrapper>() {
-                    public static final long UNDEFINED = -1L;
-                    private transient long currentEmitEventTimeLag;
-                    private transient long maxEmitEventTimeLag = Long.MIN_VALUE;
-                    private transient long minEmitEventTimeLag = Long.MAX_VALUE;
-                    private transient Meter cdcRecordsPerSecond;
-                    private transient Meter insertRecordsPerSecond;
-                    private transient Meter deleteRecordsPerSecond;
-                    private transient Meter updateRecordsPerSecond;
-                    private transient Meter ddlRecordsPerSecond;
-                    private transient Meter dmlRecordsPerSecond;
+                if (memoryStateMaxSize > 0L) {
+                    StateBackend backend = new MemoryStateBackend(memoryStateMaxSize, false);
+                    env.setStateBackend(backend);
+                }
 
-                    private transient Counter cdcRecordsCount;
-                    private transient Counter insertRecordsCount;
-                    private transient Counter updateRecordsCount;
-                    private transient Counter deleteRecordsCount;
-                    private transient Counter ddlRecordsCount;
-                    private transient Counter dmlRecordsCount;
+                if (this.dynamicSourceConfig == null || dynamicSourceConfig.isEmpty()) {
+                    throw new Exception("sourceConfig is empty");
+                }
+                HashMap<String, String> sourceConfig0 = dynamicSourceConfig.get(0);
+                String dtsName0 = sourceConfig0.get("name");
+                String dtsBrokerUrl0 = sourceConfig0.get("broker-url");
+                String dtsTopic0 = sourceConfig0.get("topic");
+                String dtsSid0 = sourceConfig0.get("sid");
+                String dtsGroup0 = sourceConfig0.get("group");
+                String dtsUser0 = sourceConfig0.get("user");
+                String dtsPassword0 = sourceConfig0.get("password");
+                String dtsStartupOffsetsTimestamp0 = sourceConfig0.get("startupOffsetsTimestamp");
+                LOG.info("Dts{}-config:{}", dtsName0, sourceConfig0);
 
-                    @Override
-                    public void open(Configuration config) {
-                        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.CURRENT_EMIT_EVENT_TIME_LAG, () -> this.currentEmitEventTimeLag);
-                        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MAX_EMIT_EVENT_TIME_LAG, new Gauge<Long>() {
-                            @Override
-                            public Long getValue() {
-                                long value = maxEmitEventTimeLag;
-                                if (value == Long.MIN_VALUE) {
-                                    return currentEmitEventTimeLag;
-                                }
-                                maxEmitEventTimeLag = Long.MIN_VALUE;
-                                return value;
-                            }
-                        });
-                        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MIN_EMIT_EVENT_TIME_LAG, new Gauge<Long>() {
-                            @Override
-                            public Long getValue() {
-                                long value = minEmitEventTimeLag;
-                                if (value == Long.MAX_VALUE) {
-                                    return currentEmitEventTimeLag;
-                                }
-                                minEmitEventTimeLag = Long.MAX_VALUE;
-                                return value;
-                            }
-                        });
-
-                        this.cdcRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.CDC_RECORDS_PER_SECOND, new MeterView(1));
-                        this.insertRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.INSERT_RECORDS_PER_SECOND, new MeterView(1));
-                        this.deleteRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.DELETE_RECORDS_PER_SECOND, new MeterView(1));
-                        this.updateRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.UPDATE_RECORDS_PER_SECOND, new MeterView(1));
-                        this.ddlRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.DDL_RECORDS_PER_SECOND, new MeterView(1));
-                        this.dmlRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.DML_RECORDS_PER_SECOND, new MeterView(1));
-
-                        this.cdcRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.CDC_RECORDS_COUNT);
-                        this.insertRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.INSERT_RECORDS_COUNT);
-                        this.deleteRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.DELETE_RECORDS_COUNT);
-                        this.updateRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.UPDATE_RECORDS_COUNT);
-                        this.ddlRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.DDL_RECORDS_COUNT);
-                        this.dmlRecordsCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.DML_RECORDS_COUNT);
-
-                    }
-
-                    private void setMetricGenericRecordsPerSecond(String type) {
-                        switch (type) {
-                            case "INSERT": {
-                                this.insertRecordsPerSecond.markEvent();
-                                this.insertRecordsCount.inc();
-                                this.dmlRecordsPerSecond.markEvent();
-                                this.dmlRecordsCount.inc();
-                                break;
-                            }
-                            case "DELETE": {
-                                this.deleteRecordsPerSecond.markEvent();
-                                this.deleteRecordsCount.inc();
-                                this.dmlRecordsPerSecond.markEvent();
-                                this.dmlRecordsCount.inc();
-                                break;
-                            }
-                            case "UPDATE": {
-                                this.updateRecordsPerSecond.markEvent();
-                                this.updateRecordsCount.inc();
-                                this.dmlRecordsPerSecond.markEvent();
-                                this.dmlRecordsCount.inc();
-                                break;
-                            }
-                            case "DDL": {
-                                this.ddlRecordsPerSecond.markEvent();
-                                this.ddlRecordsCount.inc();
-                                break;
-                            }
-                        }
-                    }
-
-                    private void setInputMetric(JSONObject dtsRecord) {
-                        try {
-                            this.cdcRecordsPerSecond.markEvent();
-                            this.cdcRecordsCount.inc();
-                        } catch (Exception e) {
-                            LOG.warn("flatmap.setMetric-{} error:", CdcMetricNames.CDC_RECORDS_PER_SECOND, e);
-                        }
-                        try {
-                            String opTsString = dtsRecord.getString("sourceTimestamp");
-                            if (opTsString != null) {
-                                long opTs = new Timestamp(Long.valueOf(opTsString)).getTime();
-                                this.currentEmitEventTimeLag = opTs != TimestampAssigner.NO_TIMESTAMP ? System.currentTimeMillis() - opTs * 1000 : UNDEFINED;
-                                this.maxEmitEventTimeLag = Math.max(currentEmitEventTimeLag, maxEmitEventTimeLag);
-                                this.minEmitEventTimeLag = Math.min(currentEmitEventTimeLag, minEmitEventTimeLag);
-
-                            }
-                        } catch (Exception e) {
-                            LOG.warn("flatmap.setInputMetric-{} error:", CdcMetricNames.CURRENT_EMIT_EVENT_TIME_LAG, e);
-                        }
-                    }
-
-                    private void setOutputMetric(JSONObject dtsRecord) {
-                        try {
-                            String operation = dtsRecord.getString("operation");
-                            setMetricGenericRecordsPerSecond(operation);
-                        } catch (Exception e) {
-                            LOG.warn("flatmap.setOutputMetric-{} error:", CdcMetricNames.CDC_RECORDS_PER_SECOND, e);
-                        }
-                    }
-
-                    @Override
-                    public void flatMap(ByteRecord byteRecord, Collector<CanalJsonWrapper> out) throws Exception {
-                        if (byteRecord != null) {
-                            JsonDtsRecord record;
-                            JSONObject dtsJson;
-                            try {
-                                record = new JsonDtsRecord(byteRecord.getBytes(), new AvroDeserializer());
-                                dtsJson = record.getJson();
-                            } catch (Exception e) {
-                                LOG.error("record.getJson error:", e);
-                                return;
-                            }
-                            setInputMetric(dtsJson);
-
-                            if (OperationType.INSERT == record.getOperationType() || OperationType.UPDATE == record.getOperationType() || OperationType.DELETE == record.getOperationType() || (OperationType.DDL == record.getOperationType() && "true".equals(enableDdl))) {
-                                String dtsObjectName = dtsJson.getString("objectName");
-                                if (!shouldMonitorTable(dtsObjectName, includingTables, excludingTables)) {
-                                    return;
-                                }
-                                LOG.debug("Source table '{}' is included.", dtsObjectName);
-                                LOG.debug("dtsJson:{}", dtsJson);
-                                try {
-                                    CanalJson canalJson = CanalJsonUtils.convert(dtsJson, routeDefs, extraColumns, currentExtraPrimaryKeys);
-                                    if (canalJson == null) {
-                                        return;
-                                    }
-                                    LOG.debug("canalJson:{}", canalJson);
-                                    setOutputMetric(dtsJson);
-                                    out.collect(DrdsCdcProcessFunction.createCanalJsonWrapper(canalJson));
-                                } catch (Exception ex) {
-                                    LOG.warn("parse dts {} to canal failed :", record, ex);
-                                }
-                            }
-                        }
-                    }
-                }).setParallelism(mapParallelism);
+                Dts2CanalProcessFunction dts2CanalProcessFunction0 = new Dts2CanalProcessFunction();
+                dts2CanalProcessFunction0.setRouteDefs(routeDefs);
+                dts2CanalProcessFunction0.setExtraColumns(extraColumns);
+                dts2CanalProcessFunction0.setExtraPrimaryKeys(currentExtraPrimaryKeys);
+                dts2CanalProcessFunction0.setIncludingTables(includingTables);
+                dts2CanalProcessFunction0.setExcludingTables(excludingTables);
+                dts2CanalProcessFunction0.setEnableDdl(enableDdl);
+                dts2CanalProcessFunction0.setMapToString(mapToString);
+                dts2CanalProcessFunction0.setDtsTopic(dtsTopic0);
+                DataStream<CanalJsonWrapper> input = env.addSource(new FlinkDtsRawConsumer(dtsBrokerUrl0, dtsTopic0, dtsSid0, dtsGroup0, dtsUser0, dtsPassword0, Long.parseLong(dtsStartupOffsetsTimestamp0), new DtsByteDeserializationSchema(), null).assignTimestampsAndWatermarks(new DtsAssignerWithPeriodicWatermarks(Duration.ofSeconds(0)))).setParallelism(1).name(dtsName0).process(dts2CanalProcessFunction0).name(dtsName0 + "ToCanal").setParallelism(mapParallelism);
+                for (int i = 1; i < dynamicSourceConfig.size(); i++) {
+                    HashMap<String, String> sourceConfigN = dynamicSourceConfig.get(i);
+                    String dtsNameN = sourceConfigN.get("name");
+                    String dtsBrokerUrlN = sourceConfigN.get("broker-url");
+                    String dtsTopicN = sourceConfigN.get("topic");
+                    String dtsSidN = sourceConfigN.get("sid");
+                    String dtsGroupN = sourceConfigN.get("group");
+                    String dtsUserN = sourceConfigN.get("user");
+                    String dtsPasswordN = sourceConfigN.get("password");
+                    String dtsStartupOffsetsTimestampN = sourceConfigN.get("startupOffsetsTimestamp");
+                    LOG.info("Dts{}-config:{}", dtsNameN, sourceConfigN);
+                    Dts2CanalProcessFunction dts2CanalProcessFunctionN = new Dts2CanalProcessFunction();
+                    dts2CanalProcessFunctionN.setRouteDefs(routeDefs);
+                    dts2CanalProcessFunctionN.setExtraColumns(extraColumns);
+                    dts2CanalProcessFunctionN.setExtraPrimaryKeys(currentExtraPrimaryKeys);
+                    dts2CanalProcessFunctionN.setIncludingTables(includingTables);
+                    dts2CanalProcessFunctionN.setExcludingTables(excludingTables);
+                    dts2CanalProcessFunctionN.setEnableDdl(enableDdl);
+                    dts2CanalProcessFunctionN.setMapToString(mapToString);
+                    dts2CanalProcessFunctionN.setDtsTopic(dtsTopicN);
+                    input = input.union(env.addSource(new FlinkDtsRawConsumer(dtsBrokerUrlN, dtsTopicN, dtsSidN, dtsGroupN, dtsUserN, dtsPasswordN, Long.parseLong(dtsStartupOffsetsTimestampN), new DtsByteDeserializationSchema(), null).assignTimestampsAndWatermarks(new DtsAssignerWithPeriodicWatermarks(Duration.ofSeconds(0)))).setParallelism(1).name(dtsNameN).process(dts2CanalProcessFunctionN).name(dtsNameN + "ToCanal").setParallelism(mapParallelism));
+                }
 
                 if ("true".equalsIgnoreCase(enablePartitionUpdatePerform)) {
                     final OutputTag<CanalJsonWrapper> stateOutputTag = new OutputTag<CanalJsonWrapper>("state-output") {
@@ -282,20 +179,75 @@ public class Dts2CanalJsonKafka {
                                 context.output(passThroughOutputTag, s);
                             }
                         }
-                    });
+                    }).name("KeyBy");
 
                     DataStream<CanalJsonWrapper> passThroughStream = mainDataStream.getSideOutput(passThroughOutputTag);
-                    DataStream<CanalJsonWrapper> stateStream = mainDataStream.getSideOutput(stateOutputTag)
-                            .keyBy(value -> DrdsCdcProcessFunction.generateStateKey(value))
-                            .process(new DrdsCdcProcessFunction());
+                    DrdsCdcProcessFunction drdsCdcProcessFunction = new DrdsCdcProcessFunction();
+                    drdsCdcProcessFunction.setStateTtl(partitionUpdatePerformsStateTtl);
+                    drdsCdcProcessFunction.setTimerTimeInternalMs(partitionUpdatePerformsTimerTimeInternalMs);
+                    DataStream<CanalJsonWrapper> stateStream = mainDataStream.getSideOutput(stateOutputTag).keyBy(value -> DrdsCdcProcessFunction.generateStateKey(value, true)).process(drdsCdcProcessFunction).name("PartitionUpdatePerform").setParallelism(1);
                     input = stateStream.union(passThroughStream);
                 }
 
-                DataStream<String> output = input.map(item -> JSON.toJSONString(item.getCanalJson(), JSONWriter.Feature.WriteMapNullValue)).returns(String.class);
+                DataStream<String> output = input.map(item -> {
+                    CanalJson canalJson = item.getCanalJson();
+                    Map<String, String> canalJsonWrapperTags = item.getTags();
+                    Map<String, Map<String, String>> canalJsonTags = canalJson.getTags();
+                    if (canalJsonTags == null) {
+                        canalJsonTags = new HashMap<>();
+                    }
+
+                    Map<String, String> dtsTags = canalJsonTags.get("dts");
+                    if (dtsTags == null) {
+                        dtsTags = new HashMap<>();
+                    }
+                    if (canalJsonWrapperTags != null) {
+                        dtsTags.put("dtsTopic", canalJsonWrapperTags.get("dtsTopic"));
+                    }
+                    canalJsonTags.put("dts", dtsTags);
+
+                    Map<String, String> subscribeTags = canalJsonTags.get("subscribe");
+                    if (subscribeTags == null) {
+                        subscribeTags = new HashMap<>();
+                    }
+                    if (canalJsonWrapperTags != null) {
+                        subscribeTags.put("kafkaSinkTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(System.currentTimeMillis()));
+                        subscribeTags.put("sourceInTime", canalJsonWrapperTags.get("sourceInTime"));
+                        subscribeTags.put("dts2canalOutTime", canalJsonWrapperTags.get("dts2canalOutTime"));
+                        subscribeTags.put("partitionUpdateInTime", canalJsonWrapperTags.get("partitionUpdateInTime"));
+                        subscribeTags.put("stateRegisterTimerTime", canalJsonWrapperTags.get("stateRegisterTimerTime"));
+                        subscribeTags.put("stateMatchStateTime", canalJsonWrapperTags.get("stateMatchStateTime"));
+                        subscribeTags.put("stateOnTimerTime", canalJsonWrapperTags.get("stateOnTimerTime"));
+                        subscribeTags.put("partitionUpdateOutTime", canalJsonWrapperTags.get("partitionUpdateOutTime"));
+
+                        String registerTimerEventTimestamp = canalJsonWrapperTags.get("eventTimestamp");
+                        String registerTimerProcessTimestamp = canalJsonWrapperTags.get("processTimestamp");
+                        String registerTimerWatermark = canalJsonWrapperTags.get("watermark");
+                        if (StringUtils.isNotBlank(registerTimerEventTimestamp)) {
+                            subscribeTags.put("registerTimerEventTimestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(new Timestamp(Long.valueOf(registerTimerEventTimestamp))));
+                        } else {
+                            subscribeTags.put("registerTimerEventTimestamp", null);
+                        }
+                        if (StringUtils.isNotBlank(registerTimerProcessTimestamp)) {
+                            subscribeTags.put("registerTimerProcessTimestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(new Timestamp(Long.valueOf(registerTimerProcessTimestamp))));
+                        } else {
+                            subscribeTags.put("registerTimerProcessTimestamp", null);
+                        }
+                        if (StringUtils.isNotBlank(registerTimerWatermark)) {
+                            subscribeTags.put("registerTimerWatermark", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(new Timestamp(Long.valueOf(registerTimerWatermark))));
+                        } else {
+                            subscribeTags.put("registerTimerWatermark", null);
+                        }
+                    }
+                    canalJsonTags.put("subscribe", subscribeTags);
+                    canalJson.setTags(canalJsonTags);
+                    String itemAfter = JSON.toJSONString(canalJson, JSONWriter.Feature.WriteMapNullValue);
+                    return itemAfter;
+                }).returns(String.class).setParallelism(1);
 
                 if (StringUtils.isBlank(kafkaTopic)) {
                     output.addSink(new PrintSinkFunction<>()).name("Print").setParallelism(sinkParallelism);
-                    env.execute("Dts2Canal-" + jobName);
+                    env.execute("dts2print");
                     return;
                 }
 
@@ -325,9 +277,12 @@ public class Dts2CanalJsonKafka {
                 FlinkKafkaProducer<String> kafkaProducer = new FlinkKafkaProducer<>(kafkaTopic, new KeyedSerializationSchemaWrapper<>(new SimpleStringSchema()), sinkProperties, Optional.of(new FlinkKafkaPartitioner<String>() {
                     @Override
                     public int partition(String value, byte[] key, byte[] valueSerialized, String targetTopic, int[] partitions) {
+                        if (kafkaPartition != null) {
+                            return Integer.valueOf(kafkaPartition);
+                        }
                         JSONObject jsonObject = JSONObject.parseObject(value);
                         String operationType = jsonObject.getString("type");
-                        if (operationType.equals("INSERT") || operationType.equals("UPDATE") || operationType.equals("DELETE")) {
+                        if (operationType.equals("INSERT") || operationType.equals("UPDATE") || operationType.equals("DELETE") || operationType.equals("INSERT" + DrdsCdcProcessFunction.MERGE_SUFFIX) || operationType.equals("DELETE" + DrdsCdcProcessFunction.MERGE_SUFFIX) || operationType.equals("INSERT" + DrdsCdcProcessFunction.NOMATCH_DROP_SUFFIX) || operationType.equals("DELETE" + DrdsCdcProcessFunction.NOMATCH_DROP_SUFFIX)) {
                             return calculatePartition(jsonObject, partitions.length, prov);
                         } else {
                             return 0;

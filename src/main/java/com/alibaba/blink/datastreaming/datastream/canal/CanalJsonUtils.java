@@ -80,10 +80,10 @@ public class CanalJsonUtils {
     }
 
     public static CanalJson convert(JSONObject dtsJsonObject) {
-        return convert(dtsJsonObject, null, null, null);
+        return convert(dtsJsonObject, null, null, null, null);
     }
 
-    public static CanalJson convert(JSONObject dtsJsonObject, List<RouteDef> routeDefs, HashMap<String, String> extraColumns, String extraPrimaryKeys) {
+    public static CanalJson convert(JSONObject dtsJsonObject, List<RouteDef> routeDefs, HashMap<String, String> extraColumns, String extraPrimaryKeys, String mapToString) {
         CanalJson canalJson = new CanalJson();
         canalJson.setType(dtsJsonObject.getString("operation")); // 假定 operation 字段即代表了 DTS 操作类型 UPDATE, INSERT 等
         canalJson.setId(dtsJsonObject.getLong("id"));
@@ -217,7 +217,7 @@ public class CanalJsonUtils {
             // 字段类型和字段 SQL 类型映射
             Map<String, Integer> sqlTypeMap = dtsJsonFields.stream().collect(Collectors.toMap(fieldObj -> ((JSONObject) fieldObj).getString("name"), fieldObj -> ((JSONObject) fieldObj).getInteger("dataTypeNumber")));
             canalJson.setSqlType(sqlTypeMap);
-            Map<String, String> mysqlType = convertToTypeNameMap(sqlTypeMap);
+            Map<String, String> mysqlType = convertToTypeNameMap(sqlTypeMap, mapToString);
             canalJson.setMysqlType(mysqlType);
 
             // 其他字段根据实际情况进行填充
@@ -258,7 +258,7 @@ public class CanalJsonUtils {
         if (tags != null && tags.containsKey("readerThroughoutTime")) {
             String readerThroughoutTime = tags.getString("readerThroughoutTime");
             if (readerThroughoutTime != null) {
-                dts.put("readerThroughoutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Timestamp(Long.valueOf(readerThroughoutTime))));
+                dts.put("readerThroughoutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(new Timestamp(Long.valueOf(readerThroughoutTime))));
             } else {
                 dts.put("readerThroughoutTime", "");
             }
@@ -267,21 +267,25 @@ public class CanalJsonUtils {
         }
         canalTags.put("dts", dts);
         Map<String, String> subscribe = new HashMap<>();
-        subscribe.put("kafkaSinkTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Timestamp(System.currentTimeMillis())));
+        subscribe.put("kafkaSinkTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(new Timestamp(System.currentTimeMillis())));
         canalTags.put("subscribe", subscribe);
 
         canalJson.setTags(canalTags);
     }
 
-    public static Map<String, String> convertToTypeNameMap(Map<String, Integer> sqlTypeMap) {
+    public static Map<String, String> convertToTypeNameMap(Map<String, Integer> sqlTypeMap, String mapToString) {
         Map<String, String> sqlTypeNameMap = new HashMap<>();
         for (Map.Entry<String, Integer> entry : sqlTypeMap.entrySet()) {
             String fieldName = entry.getKey();
             Integer typeNumber = entry.getValue();
-            String typeName = typeMap.getOrDefault(typeNumber, "VARCHAR");
+            String typeName = "true".equalsIgnoreCase(mapToString) ? "VARCHAR" : typeMap.getOrDefault(typeNumber, "VARCHAR");
             sqlTypeNameMap.put(fieldName, typeName);
         }
         return sqlTypeNameMap;
+    }
+
+    public static Map<String, String> convertToTypeNameMap(Map<String, Integer> sqlTypeMap) {
+        return convertToTypeNameMap(sqlTypeMap, null);
     }
 
     private static Map<String, String> convertFieldMap(JSONObject fieldJson, HashMap<String, String> extraFieldMap) {
