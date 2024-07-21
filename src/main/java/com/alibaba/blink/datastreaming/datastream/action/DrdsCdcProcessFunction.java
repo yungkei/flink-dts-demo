@@ -151,8 +151,8 @@ public class DrdsCdcProcessFunction extends KeyedProcessFunction<String, CanalJs
             }
 
             Map<String, String> storeTags = storeState.getTags();
-            storeTags.put("stateOnTimerTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(System.currentTimeMillis()));
-            storeTags.put("partitionUpdateOutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(System.currentTimeMillis()));
+            storeTags.put("stateOnTimerTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
+            storeTags.put("partitionUpdateOutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
             storeState.setTags(storeTags);
             out.collect(storeState);
             mapState.remove(key);
@@ -165,7 +165,7 @@ public class DrdsCdcProcessFunction extends KeyedProcessFunction<String, CanalJs
     @Override
     public void processElement(CanalJsonWrapper in, Context context, Collector<CanalJsonWrapper> out) throws Exception {
         Map<String, String> inTags = in.getTags();
-        inTags.put("partitionUpdateInTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(System.currentTimeMillis()));
+        inTags.put("partitionUpdateInTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
         String stateKey = generateStateKey(in, true);
         if (mapState.contains(stateKey)) {
             CanalJsonWrapper stateValue = mapState.get(stateKey);
@@ -175,29 +175,28 @@ public class DrdsCdcProcessFunction extends KeyedProcessFunction<String, CanalJs
 
                 long eventTimestamp = Long.valueOf(stateValue.getTags().get("eventTimestamp"));
                 long processTimestamp = Long.valueOf(stateValue.getTags().get("processTimestamp"));
-                long watermark = Long.valueOf(stateValue.getTags().get("watermark"));
                 long eventTimer = Long.valueOf(stateValue.getTags().get("eventTimer"));
-                inTags.put("eventTimestamp", String.valueOf(eventTimestamp));
-                inTags.put("processTimestamp", String.valueOf(processTimestamp));
-                inTags.put("watermark", String.valueOf(watermark));
-                inTags.put("eventTimer", String.valueOf(eventTimer));
 
-                inTags.put("stateRegisterTimerTime", stateValue.getTags().get("stateRegisterTimerTime"));
-                inTags.put("stateMatchStateTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(System.currentTimeMillis()));
-                inTags.put("partitionUpdateOutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(System.currentTimeMillis()));
-
-                CanalJson canalJsonMerged = mergeState(canalJson, canalJsonState);
-                CanalJsonWrapper canalJsonWrapperMerged = createCanalJsonWrapper(canalJsonMerged);
-                canalJsonWrapperMerged.setTags(inTags);
+                CanalJsonWrapper canalJsonWrapperMerged = mergeState(in, stateValue);
+                Map<String, String> mergedTags = canalJsonWrapperMerged.getTags();
+                mergedTags.put("stateMatchStateTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
+                mergedTags.put("partitionUpdateOutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
+                canalJsonWrapperMerged.setTags(mergedTags);
                 out.collect(canalJsonWrapperMerged);
 
                 canalJsonState.setType(canalJsonState.getType() + MERGE_SUFFIX);
                 CanalJsonWrapper canalJsonWrapperState = createCanalJsonWrapper(canalJsonState);
-                canalJsonWrapperState.setTags(inTags);
+                Map<String, String> stateTags = stateValue.getTags();
+                stateTags.put("stateMatchStateTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
+                stateTags.put("partitionUpdateOutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
+                canalJsonWrapperState.setTags(stateTags);
                 out.collect(canalJsonWrapperState);
 
                 canalJson.setType(canalJson.getType() + MERGE_SUFFIX);
                 CanalJsonWrapper canalJsonWrapper = createCanalJsonWrapper(canalJson);
+                inTags.put("eventTimer", String.valueOf(eventTimer));
+                inTags.put("stateMatchStateTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
+                inTags.put("partitionUpdateOutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
                 canalJsonWrapper.setTags(inTags);
                 out.collect(canalJsonWrapper);
 
@@ -214,24 +213,16 @@ public class DrdsCdcProcessFunction extends KeyedProcessFunction<String, CanalJs
                 context.timerService().deleteEventTimeTimer(eventTimer);
                 partitionUpdateProcessRemoveStateCount.inc();
             } else {
-                long eventTimestamp = Long.valueOf(stateValue.getTags().get("eventTimestamp"));
-                long processTimestamp = Long.valueOf(stateValue.getTags().get("processTimestamp"));
-                long watermark = Long.valueOf(stateValue.getTags().get("watermark"));
                 long eventTimer = Long.valueOf(stateValue.getTags().get("eventTimer"));
-                inTags.put("stateRegisterTimerTime", stateValue.getTags().get("stateRegisterTimerTime"));
-                inTags.put("partitionUpdateOutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(System.currentTimeMillis()));
-                inTags.put("eventTimestamp", String.valueOf(eventTimestamp));
-                inTags.put("processTimestamp", String.valueOf(processTimestamp));
-                inTags.put("watermark", String.valueOf(watermark));
+                inTags.put("partitionUpdateOutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
                 inTags.put("eventTimer", String.valueOf(eventTimer));
 
                 if ("rme_eqp_model".equalsIgnoreCase(in.getTable())) {
                     CanalJson canalJson = in.getCanalJson();
-                    canalJson.setType(canalJson.getType() + MERGE_SUFFIX);
+                    canalJson.setType(canalJson.getType() + NOMATCH_DROP_SUFFIX);
                     CanalJsonWrapper canalJsonWrapper = createCanalJsonWrapper(canalJson);
                     canalJsonWrapper.setTags(inTags);
                     out.collect(canalJsonWrapper);
-                    out.collect(in);
                 } else {
                     Long stateEventTimestamp = Long.valueOf(stateValue.getTags().get("eventTimestamp"));
                     Long currentEventTimestamp = context.timestamp();
@@ -251,11 +242,10 @@ public class DrdsCdcProcessFunction extends KeyedProcessFunction<String, CanalJs
             long watermark = context.timerService().currentWatermark();
             long dynamicInterval = (this.previousMaxEventTimestamp.value() == null ? eventTimestamp : this.previousMaxEventTimestamp.value()) - watermark;
             long eventTimer = watermark + (dynamicInterval > 0 ? dynamicInterval : 0) + timerTimeInternalMs;
+            inTags.put("stateRegisterTimerTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
+            inTags.put("eventTimer", String.valueOf(eventTimer));
             inTags.put("eventTimestamp", String.valueOf(eventTimestamp));
             inTags.put("processTimestamp", String.valueOf(processTimestamp));
-            inTags.put("stateRegisterTimerTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(System.currentTimeMillis()));
-            inTags.put("watermark", String.valueOf(watermark));
-            inTags.put("eventTimer", String.valueOf(eventTimer));
             in.setTags(inTags);
             mapState.put(stateKey, in);
             partitionUpdateProcessAddStateCount.inc();
@@ -385,5 +375,19 @@ public class DrdsCdcProcessFunction extends KeyedProcessFunction<String, CanalJs
         canalJsonMerged.setType("UPDATE");
         return canalJsonMerged;
     }
+
+    public CanalJsonWrapper mergeState(CanalJsonWrapper current, CanalJsonWrapper store) throws Exception {
+        CanalJson canalJsonCurrent = current.getCanalJson();
+        CanalJson canalJsonStore = store.getCanalJson();
+        CanalJson canalJsonMerged = mergeState(canalJsonCurrent, canalJsonStore);
+        CanalJsonWrapper canalJsonMergedWrapper = createCanalJsonWrapper(canalJsonMerged);
+        if ("insert".equalsIgnoreCase(current.getOperation()) && "delete".equalsIgnoreCase(store.getOperation())) {
+            canalJsonMergedWrapper.setTags(current.getTags());
+        } else if ("delete".equalsIgnoreCase(current.getOperation()) && "insert".equalsIgnoreCase(store.getOperation())) {
+            canalJsonMergedWrapper.setTags(store.getTags());
+        }
+        return canalJsonMergedWrapper;
+    }
+
 
 }

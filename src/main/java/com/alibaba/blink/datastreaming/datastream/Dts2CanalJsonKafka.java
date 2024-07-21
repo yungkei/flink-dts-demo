@@ -27,7 +27,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
-import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
 import java.util.*;
@@ -173,6 +172,9 @@ public class Dts2CanalJsonKafka {
                     SingleOutputStreamOperator<CanalJsonWrapper> mainDataStream = input.process(new ProcessFunction<CanalJsonWrapper, CanalJsonWrapper>() {
                         @Override
                         public void processElement(CanalJsonWrapper s, ProcessFunction<CanalJsonWrapper, CanalJsonWrapper>.Context context, Collector<CanalJsonWrapper> collector) {
+                            Map<String, String> tags = s.getTags();
+                            tags.put("watermark", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(context.timestamp()));
+                            s.setTags(tags);
                             if (DrdsCdcProcessFunction.shouldAdditionalProcess(s)) {
                                 context.output(stateOutputTag, s);
                             } else {
@@ -211,33 +213,13 @@ public class Dts2CanalJsonKafka {
                         subscribeTags = new HashMap<>();
                     }
                     if (canalJsonWrapperTags != null) {
-                        subscribeTags.put("kafkaSinkTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(System.currentTimeMillis()));
+                        subscribeTags.put("kafkaSinkTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
                         subscribeTags.put("sourceInTime", canalJsonWrapperTags.get("sourceInTime"));
                         subscribeTags.put("dts2canalOutTime", canalJsonWrapperTags.get("dts2canalOutTime"));
                         subscribeTags.put("partitionUpdateInTime", canalJsonWrapperTags.get("partitionUpdateInTime"));
                         subscribeTags.put("stateRegisterTimerTime", canalJsonWrapperTags.get("stateRegisterTimerTime"));
                         subscribeTags.put("stateMatchStateTime", canalJsonWrapperTags.get("stateMatchStateTime"));
                         subscribeTags.put("stateOnTimerTime", canalJsonWrapperTags.get("stateOnTimerTime"));
-                        subscribeTags.put("partitionUpdateOutTime", canalJsonWrapperTags.get("partitionUpdateOutTime"));
-
-                        String registerTimerEventTimestamp = canalJsonWrapperTags.get("eventTimestamp");
-                        String registerTimerProcessTimestamp = canalJsonWrapperTags.get("processTimestamp");
-                        String registerTimerWatermark = canalJsonWrapperTags.get("watermark");
-                        if (StringUtils.isNotBlank(registerTimerEventTimestamp)) {
-                            subscribeTags.put("registerTimerEventTimestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(new Timestamp(Long.valueOf(registerTimerEventTimestamp))));
-                        } else {
-                            subscribeTags.put("registerTimerEventTimestamp", null);
-                        }
-                        if (StringUtils.isNotBlank(registerTimerProcessTimestamp)) {
-                            subscribeTags.put("registerTimerProcessTimestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(new Timestamp(Long.valueOf(registerTimerProcessTimestamp))));
-                        } else {
-                            subscribeTags.put("registerTimerProcessTimestamp", null);
-                        }
-                        if (StringUtils.isNotBlank(registerTimerWatermark)) {
-                            subscribeTags.put("registerTimerWatermark", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(new Timestamp(Long.valueOf(registerTimerWatermark))));
-                        } else {
-                            subscribeTags.put("registerTimerWatermark", null);
-                        }
                     }
                     canalJsonTags.put("subscribe", subscribeTags);
                     canalJson.setTags(canalJsonTags);
