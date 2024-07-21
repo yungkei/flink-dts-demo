@@ -25,6 +25,7 @@ public abstract class AbstractFlinkAction {
     private static final String ROUTE_TARGET_DATABASE_KEY = "target-database";
     private static final String INCLUDING_TARGET_TABLES_KEY = "including-target-tables";
     private static final String EXCLUDING_TARGET_TABLES_KEY = "excluding-target-tables";
+    private static final String BROADCAST_TABLES_KEY = "broadcast-tables";
     private static final String TABLE_ROUTE_KEY = "table-route";
     private static final String ROUTE_SOURCE_TABLE_KEY = "source-table";
     private static final String ROUTE_TARGET_TABLE_KEY = "target-table";
@@ -130,18 +131,19 @@ public abstract class AbstractFlinkAction {
         return result;
     }
 
-    private RouteDef toRouteDef(String jsonString) {
+    public RouteDef toRouteDef(String jsonString) {
         JSONObject jsonObject;
         try {
             jsonObject = JSONObject.parseObject(jsonString);
         } catch (Exception e) {
             LOG.warn("toRouteDef parseObject error:", e);
-            return new RouteDef("", "", "", "", Collections.emptyList());
+            return new RouteDef("", "", "", "", "", Collections.emptyList());
         }
         String sourceDatabase = jsonObject.getOrDefault(ROUTE_SOURCE_DATABASE_KEY, "").toString();
         String targetDatabase = jsonObject.getOrDefault(ROUTE_TARGET_DATABASE_KEY, "").toString();
         String includingTargetTables = jsonObject.getOrDefault(INCLUDING_TARGET_TABLES_KEY, "").toString();
         String excludingTargetTables = jsonObject.getOrDefault(EXCLUDING_TARGET_TABLES_KEY, "").toString();
+        String broadcastTables = jsonObject.getOrDefault(BROADCAST_TABLES_KEY, "").toString();
         JSONArray tableRouteJSONArray = jsonObject.getJSONArray(TABLE_ROUTE_KEY);
         List<FlatRouteDef> flatRouteDefs = new ArrayList<>();
         if (tableRouteJSONArray != null && !tableRouteJSONArray.isEmpty()) {
@@ -153,7 +155,7 @@ public abstract class AbstractFlinkAction {
                 flatRouteDefs.add(new FlatRouteDef(sourceTable, targetTable, description));
             }
         }
-        return new RouteDef(sourceDatabase, targetDatabase, includingTargetTables, excludingTargetTables, flatRouteDefs);
+        return new RouteDef(sourceDatabase, targetDatabase, includingTargetTables, excludingTargetTables, broadcastTables, flatRouteDefs);
     }
 
     public static boolean matchWithTablePattern(Pattern sourcePattern, String source) {
@@ -209,7 +211,7 @@ public abstract class AbstractFlinkAction {
                 String sourceTable = tableRouteDef.getSourceTable();
                 String targetTable = tableRouteDef.getTargetTable();
                 Optional<String> description = tableRouteDef.getDescription();
-                String sourceFlatTable = sourceDatabase + "." + sourceTable;
+                String sourceFlatTable = sourceDatabase + "\\." + sourceTable;
                 String targetFlatTable = targetDatabase + "." + targetTable;
                 flatRouteDefs.add(new FlatRouteDef(sourceFlatTable, targetFlatTable, description.isPresent() ? description.get() : null));
             }

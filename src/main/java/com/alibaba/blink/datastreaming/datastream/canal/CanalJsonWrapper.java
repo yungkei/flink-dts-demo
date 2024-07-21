@@ -3,7 +3,7 @@ package com.alibaba.blink.datastreaming.datastream.canal;
 import java.io.Serializable;
 import java.util.Map;
 
-public class CanalJsonWrapper implements Serializable {
+public class CanalJsonWrapper implements Serializable, Comparable<CanalJsonWrapper> {
     private static final long serialVersionUID = -5539833118000238345L;
 
     private String pk;
@@ -70,6 +70,24 @@ public class CanalJsonWrapper implements Serializable {
                 ", operation='" + operation + '\'' +
                 ", canalJson=" + canalJson +
                 ", tags=" + tags +
+                ", eventTime=" + eventTime +
                 '}';
+    }
+
+    private Long eventTime;
+
+    public Long getEventTime() {
+        return eventTime;
+    }
+
+    public void setEventTime(Long eventTime) {
+        this.eventTime = eventTime;
+    }
+
+    @Override
+    public int compareTo(CanalJsonWrapper o) {
+        long sourceTimestamp = this.getEventTime();
+        long targetTimestamp = o.getEventTime();
+        return Math.toIntExact(targetTimestamp - sourceTimestamp);
     }
 }

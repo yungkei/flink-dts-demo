@@ -33,13 +33,6 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
     private transient Meter cdcRecordsPerSecond;
     private transient long currentReaderThroughoutTimeDelay;
     private transient long currentReaderThroughoutTimestamp;
-    private transient long currentKafkaWatermarkDelay;
-    private transient long maxKafkaWatermarkDelay;
-    public transient long minKafkaWatermarkDelay;
-    private transient long currentEventWatermarkDelay;
-    public transient long maxEventWatermarkDelay;
-    public transient long minEventWatermarkDelay;
-
     private transient long matchedMaxDtsReaderDelay = Long.MIN_VALUE;
     private transient long matchedMinDtsReaderDelay = Long.MAX_VALUE;
     private transient long matchedCurrentDtsReaderDelay;
@@ -55,12 +48,11 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
     private transient long matchedCurrentSourceTimestamp;
     private transient long matchedMaxSourceTimestamp = Long.MIN_VALUE;
     private transient long matchedMinSourceTimestamp = Long.MAX_VALUE;
-    private transient long matchedCurrentKafkaWatermarkDelay;
-    private transient long matchedMaxKafkaWatermarkDelay = Long.MIN_VALUE;
-    public transient long matchedMinKafkaWatermarkDelay = Long.MAX_VALUE;
-    private transient long matchedCurrentEventWatermarkDelay;
-    public transient long matchedMaxEventWatermarkDelay = Long.MIN_VALUE;
-    public transient long matchedMinEventWatermarkDelay = Long.MAX_VALUE;
+
+    private transient long currentEventReaderThroughoutDelay;
+    private transient long maxEventReaderThroughoutDelay = Long.MIN_VALUE;
+    private transient long matchedCurrentEventReaderThroughoutDelay;
+    private transient long matchedMaxEventReaderThroughoutDelay = Long.MIN_VALUE;
 
     private List<RouteDef> routeDefs;
     private HashMap<String, String> extraColumns;
@@ -119,24 +111,9 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
         this.cdcRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.CDC_RECORDS_PER_SECOND, new MeterView(1));
         getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.CURRENT_READER_THROUGHOUT_TIME_DELAY, () -> this.currentReaderThroughoutTimeDelay);
         getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.CURRENT_READER_THROUGHOUT_TIMESTAMP, () -> this.currentReaderThroughoutTimestamp);
-        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MAX_KAFKA_WATERMARK_DELAY, () -> {
-            long value = CdcMetricNames.maxGaugeValue(maxKafkaWatermarkDelay, currentKafkaWatermarkDelay);
-            maxKafkaWatermarkDelay = Long.MIN_VALUE;
-            return value;
-        });
-        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MIN_KAFKA_WATERMARK_DELAY, () -> {
-            long value = CdcMetricNames.minGaugeValue(minKafkaWatermarkDelay, currentKafkaWatermarkDelay);
-            minKafkaWatermarkDelay = Long.MAX_VALUE;
-            return value;
-        });
-        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MAX_EVENT_WATERMARK_DELAY, () -> {
-            long value = CdcMetricNames.maxGaugeValue(maxEventWatermarkDelay, currentEventWatermarkDelay);
-            maxEventWatermarkDelay = Long.MIN_VALUE;
-            return value;
-        });
-        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MIN_EVENT_WATERMARK_DELAY, () -> {
-            long value = CdcMetricNames.minGaugeValue(minEventWatermarkDelay, currentEventWatermarkDelay);
-            minEventWatermarkDelay = Long.MAX_VALUE;
+        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MAX_EVENT_READER_THROUGHOUT_TIME_DELAY, () -> {
+            long value = CdcMetricNames.maxGaugeValue(maxEventReaderThroughoutDelay, currentEventReaderThroughoutDelay);
+            maxEventReaderThroughoutDelay = Long.MIN_VALUE;
             return value;
         });
 
@@ -154,24 +131,9 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
         this.matchedCdcRecordsPerSecond = getRuntimeContext().getMetricGroup().meter(CdcMetricNames.MATCHED_CDC_RECORDS_PER_SECOND, new MeterView(1));
         getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MATCHED_CURRENT_READER_THROUGHOUT_TIME_DELAY, () -> this.matchedCurrentReaderThroughoutTimeDelay);
         getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MATCHED_CURRENT_READER_THROUGHOUT_TIMESTAMP, () -> this.matchedCurrentReaderThroughoutTimestamp);
-        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MATCHED_MAX_KAFKA_WATERMARK_DELAY, () -> {
-            long value = CdcMetricNames.maxGaugeValue(matchedMaxKafkaWatermarkDelay, matchedCurrentKafkaWatermarkDelay);
-            matchedMaxKafkaWatermarkDelay = Long.MIN_VALUE;
-            return value;
-        });
-        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MATCHED_MIN_KAFKA_WATERMARK_DELAY, () -> {
-            long value = CdcMetricNames.minGaugeValue(matchedMinKafkaWatermarkDelay, matchedCurrentKafkaWatermarkDelay);
-            matchedMinKafkaWatermarkDelay = Long.MAX_VALUE;
-            return value;
-        });
-        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MATCHED_MAX_EVENT_WATERMARK_DELAY, () -> {
-            long value = CdcMetricNames.maxGaugeValue(matchedMaxEventWatermarkDelay, matchedCurrentEventWatermarkDelay);
-            matchedMaxEventWatermarkDelay = Long.MIN_VALUE;
-            return value;
-        });
-        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MATCHED_MIN_EVENT_WATERMARK_DELAY, () -> {
-            long value = CdcMetricNames.minGaugeValue(matchedMinEventWatermarkDelay, matchedCurrentEventWatermarkDelay);
-            matchedMinEventWatermarkDelay = Long.MAX_VALUE;
+        getRuntimeContext().getMetricGroup().gauge(CdcMetricNames.MATCHED_MAX_EVENT_READER_THROUGHOUT_TIME_DELAY, () -> {
+            long value = CdcMetricNames.maxGaugeValue(matchedMaxEventReaderThroughoutDelay, matchedCurrentEventReaderThroughoutDelay);
+            matchedMaxEventReaderThroughoutDelay = Long.MIN_VALUE;
             return value;
         });
 
@@ -228,7 +190,7 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
                 long readerThroughoutTime = Long.valueOf(dtsRecord.getJSONObject("tags").getString("readerThroughoutTime"));
                 this.currentDtsReaderDelay = readerThroughoutTime - sourceTimestamp;
                 this.maxDtsReaderDelay = Math.max(currentDtsReaderDelay, maxDtsReaderDelay);
-                this.minDtsReaderDelay = Math.max(currentDtsReaderDelay, minDtsReaderDelay);
+                this.minDtsReaderDelay = Math.min(currentDtsReaderDelay, minDtsReaderDelay);
             }
         } catch (Exception e) {
             LOG.warn("flatmap.setInputMetric-{} error:", CdcMetricNames.MAX_DTS_READER_DELAY, e);
@@ -248,24 +210,14 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
             LOG.warn("flatmap.setInputMetric-{} error:", CdcMetricNames.CURRENT_READER_THROUGHOUT_TIME_DELAY, e);
         }
         try {
-            if (hasSourceTimestamp) {
-                long sourceTimestamp = Long.valueOf(dtsRecord.getString("sourceTimestamp")) * 1000;
-                long watermark = context.timerService().currentWatermark();
-                this.currentKafkaWatermarkDelay = sourceTimestamp - watermark;
-                this.maxKafkaWatermarkDelay = Math.max(currentKafkaWatermarkDelay, maxKafkaWatermarkDelay);
-                this.minKafkaWatermarkDelay = Math.max(currentKafkaWatermarkDelay, minKafkaWatermarkDelay);
+            if (hasReaderThroughoutTime) {
+                long eventTime = context.timestamp();
+                long readerThroughoutTime = Long.valueOf(dtsRecord.getJSONObject("tags").getString("readerThroughoutTime"));
+                this.currentEventReaderThroughoutDelay = eventTime - readerThroughoutTime;
+                this.maxEventReaderThroughoutDelay = Math.max(maxEventReaderThroughoutDelay, currentEventReaderThroughoutDelay);
             }
         } catch (Exception e) {
-            LOG.warn("flatmap.setInputMetric-{} error:", CdcMetricNames.MAX_KAFKA_WATERMARK_DELAY, e);
-        }
-        try {
-            long eventTime = context.timestamp();
-            long watermark = context.timerService().currentWatermark();
-            this.currentEventWatermarkDelay = eventTime - watermark;
-            this.maxEventWatermarkDelay = Math.max(currentEventWatermarkDelay, maxEventWatermarkDelay);
-            this.minEventWatermarkDelay = Math.max(currentEventWatermarkDelay, minEventWatermarkDelay);
-        } catch (Exception e) {
-            LOG.warn("flatmap.setInputMetric-{} error:", CdcMetricNames.MAX_EVENT_WATERMARK_DELAY, e);
+            LOG.warn("flatmap.setInputMetric-{} error:", CdcMetricNames.MATCHED_MAX_EVENT_READER_THROUGHOUT_TIME_DELAY, e);
         }
 
     }
@@ -280,7 +232,7 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
                 long readerThroughoutTime = Long.valueOf(dtsRecord.getJSONObject("tags").getString("readerThroughoutTime"));
                 this.matchedCurrentDtsReaderDelay = readerThroughoutTime - sourceTimestamp;
                 this.matchedMaxDtsReaderDelay = Math.max(matchedCurrentDtsReaderDelay, matchedMaxDtsReaderDelay);
-                this.matchedMinDtsReaderDelay = Math.max(matchedCurrentDtsReaderDelay, matchedMinDtsReaderDelay);
+                this.matchedMinDtsReaderDelay = Math.min(matchedCurrentDtsReaderDelay, matchedMinDtsReaderDelay);
             }
         } catch (Exception e) {
             LOG.warn("flatmap.setOutputMetric-{} error:", CdcMetricNames.MATCHED_MAX_DTS_READER_DELAY, e);
@@ -299,25 +251,16 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
         } catch (Exception e) {
             LOG.warn("flatmap.setOutputMetric-{} error:", CdcMetricNames.MATCHED_CURRENT_READER_THROUGHOUT_TIME_DELAY, e);
         }
+
         try {
-            if (hasSourceTimestamp) {
-                long sourceTimestamp = Long.valueOf(dtsRecord.getString("sourceTimestamp")) * 1000;
-                long watermark = context.timerService().currentWatermark();
-                this.matchedCurrentKafkaWatermarkDelay = sourceTimestamp - watermark;
-                this.matchedMaxKafkaWatermarkDelay = Math.max(matchedCurrentKafkaWatermarkDelay, matchedMaxKafkaWatermarkDelay);
-                this.matchedMinKafkaWatermarkDelay = Math.max(matchedCurrentKafkaWatermarkDelay, matchedMinKafkaWatermarkDelay);
+            if (hasReaderThroughoutTime) {
+                long eventTime = context.timestamp();
+                long readerThroughoutTime = Long.valueOf(dtsRecord.getJSONObject("tags").getString("readerThroughoutTime"));
+                this.matchedCurrentEventReaderThroughoutDelay = eventTime - readerThroughoutTime;
+                this.matchedMaxEventReaderThroughoutDelay = Math.max(matchedMaxEventReaderThroughoutDelay, matchedCurrentEventReaderThroughoutDelay);
             }
         } catch (Exception e) {
-            LOG.warn("flatmap.setOutputMetric-{} error:", CdcMetricNames.MATCHED_MAX_KAFKA_WATERMARK_DELAY, e);
-        }
-        try {
-            long eventTime = context.timestamp();
-            long watermark = context.timerService().currentWatermark();
-            this.matchedCurrentEventWatermarkDelay = eventTime - watermark;
-            this.matchedMaxEventWatermarkDelay = Math.max(matchedCurrentEventWatermarkDelay, matchedMaxEventWatermarkDelay);
-            this.matchedMinEventWatermarkDelay = Math.max(matchedCurrentEventWatermarkDelay, matchedMinEventWatermarkDelay);
-        } catch (Exception e) {
-            LOG.warn("flatmap.setOutputMetric-{} error:", CdcMetricNames.MATCHED_MAX_EVENT_WATERMARK_DELAY, e);
+            LOG.warn("flatmap.setOutputMetric-{} error:", CdcMetricNames.MATCHED_MAX_EVENT_READER_THROUGHOUT_TIME_DELAY, e);
         }
 
 
@@ -369,11 +312,13 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
                     }
                     LOG.debug("canalJson:{}", canalJson);
                     setOutputMetric(dtsJson, context);
-                    CanalJsonWrapper canalJsonWrapper = DrdsCdcProcessFunction.createCanalJsonWrapper(canalJson);
+                    CanalJsonWrapper canalJsonWrapper = EnsureChronologicalOrderProcessFunction.createCanalJsonWrapper(canalJson);
+                    canalJsonWrapper.setEventTime(context.timestamp());
                     long dts2canalOutTimestamp = System.currentTimeMillis();
                     Map<String, String> tags = canalJsonWrapper.getTags();
-                    tags.put("sourceInTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(sourceInTime));
-                    tags.put("dts2canalOutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(dts2canalOutTimestamp));
+                    tags.put("sourceInProcessTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(sourceInTime));
+                    tags.put("eventTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(context.timestamp()));
+                    tags.put("dts2canalOutProcessTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(dts2canalOutTimestamp));
                     tags.put("dtsTopic", dtsTopic);
                     canalJsonWrapper.setTags(tags);
                     out.collect(canalJsonWrapper);

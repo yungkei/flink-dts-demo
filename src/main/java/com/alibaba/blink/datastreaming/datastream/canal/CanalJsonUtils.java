@@ -222,10 +222,12 @@ public class CanalJsonUtils {
 
             // 其他字段根据实际情况进行填充
             canalJson.setEs(dtsJsonObject.getLong("sourceTimestamp"));
-            // TimeStamp in DTS JSON seems to be in seconds, while in Canal it's expected in milliseconds.
-            canalJson.setTs(dtsJsonObject.getLong("tags.readerThroughoutTime"));
-            // Assuming that the "tags.pk_uk_info" includes primary key info in JSON format.
             JSONObject tags = dtsJsonObject.getJSONObject("tags");
+            // TimeStamp in DTS JSON seems to be in seconds, while in Canal it's expected in milliseconds.
+            if (tags != null && tags.containsKey("readerThroughoutTime")) {
+                canalJson.setTs(tags.getLong("readerThroughoutTime"));
+            }
+            // Assuming that the "tags.pk_uk_info" includes primary key info in JSON format.
             if (tags != null && tags.containsKey("pk_uk_info")) {
                 JSONObject pkInfo = JSON.parseObject(tags.getString("pk_uk_info"));
                 if (pkInfo != null && pkInfo.containsKey("PRIMARY")) {
@@ -258,7 +260,7 @@ public class CanalJsonUtils {
         if (tags != null && tags.containsKey("readerThroughoutTime")) {
             String readerThroughoutTime = tags.getString("readerThroughoutTime");
             if (readerThroughoutTime != null) {
-                dts.put("readerThroughoutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(new Timestamp(Long.valueOf(readerThroughoutTime))));
+                dts.put("readerThroughoutTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new Timestamp(Long.valueOf(readerThroughoutTime))));
             } else {
                 dts.put("readerThroughoutTime", "");
             }
@@ -267,7 +269,6 @@ public class CanalJsonUtils {
         }
         canalTags.put("dts", dts);
         Map<String, String> subscribe = new HashMap<>();
-        subscribe.put("kafkaSinkTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.ms").format(new Timestamp(System.currentTimeMillis())));
         canalTags.put("subscribe", subscribe);
 
         canalJson.setTags(canalTags);
@@ -310,7 +311,7 @@ public class CanalJsonUtils {
         return convertFieldMap(fieldJson, null);
     }
 
-    private static String performDtsObjectName(String source, String preTarget) {
+    public static String performDtsObjectName(String source, String preTarget) {
         String[] dbTableArray = preTarget.split("\\.");
         if (dbTableArray.length == 2) {
             return preTarget;

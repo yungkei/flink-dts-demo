@@ -14,15 +14,11 @@ import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.runtime.state.StateBackend;
 import org.apache.flink.runtime.state.memory.MemoryStateBackend;
 import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.streaming.api.functions.sink.PrintSinkFunction;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
 import org.apache.flink.streaming.connectors.kafka.internals.KeyedSerializationSchemaWrapper;
 import org.apache.flink.streaming.connectors.kafka.partitioner.FlinkKafkaPartitioner;
-import org.apache.flink.util.Collector;
-import org.apache.flink.util.OutputTag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -164,31 +160,15 @@ public class Dts2CanalJsonKafka {
                 }
 
                 if ("true".equalsIgnoreCase(enablePartitionUpdatePerform)) {
-                    final OutputTag<CanalJsonWrapper> stateOutputTag = new OutputTag<CanalJsonWrapper>("state-output") {
-                    };
-                    final OutputTag<CanalJsonWrapper> passThroughOutputTag = new OutputTag<CanalJsonWrapper>("pass-through-output") {
-                    };
-
-                    SingleOutputStreamOperator<CanalJsonWrapper> mainDataStream = input.process(new ProcessFunction<CanalJsonWrapper, CanalJsonWrapper>() {
-                        @Override
-                        public void processElement(CanalJsonWrapper s, ProcessFunction<CanalJsonWrapper, CanalJsonWrapper>.Context context, Collector<CanalJsonWrapper> collector) {
-                            Map<String, String> tags = s.getTags();
-                            tags.put("watermark", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(context.timestamp()));
-                            s.setTags(tags);
-                            if (DrdsCdcProcessFunction.shouldAdditionalProcess(s)) {
-                                context.output(stateOutputTag, s);
-                            } else {
-                                context.output(passThroughOutputTag, s);
-                            }
-                        }
-                    }).name("KeyBy");
-
-                    DataStream<CanalJsonWrapper> passThroughStream = mainDataStream.getSideOutput(passThroughOutputTag);
-                    DrdsCdcProcessFunction drdsCdcProcessFunction = new DrdsCdcProcessFunction();
-                    drdsCdcProcessFunction.setStateTtl(partitionUpdatePerformsStateTtl);
-                    drdsCdcProcessFunction.setTimerTimeInternalMs(partitionUpdatePerformsTimerTimeInternalMs);
-                    DataStream<CanalJsonWrapper> stateStream = mainDataStream.getSideOutput(stateOutputTag).keyBy(value -> DrdsCdcProcessFunction.generateStateKey(value, true)).process(drdsCdcProcessFunction).name("PartitionUpdatePerform").setParallelism(1);
-                    input = stateStream.union(passThroughStream);
+                    EnsureChronologicalOrderProcessFunction ensureChronologicalOrderProcessFunction = new EnsureChronologicalOrderProcessFunction();
+                    ensureChronologicalOrderProcessFunction.setTimerTimeInternalMs(partitionUpdatePerformsTimerTimeInternalMs);
+                    ensureChronologicalOrderProcessFunction.setRouteDefs(routeDefs);
+                    DataStream<CanalJsonWrapper> stateStream = input
+                            .keyBy(value -> EnsureChronologicalOrderProcessFunction.generateStateKey(value))
+                            .process(ensureChronologicalOrderProcessFunction)
+                            .name("EnsureChronologicalOrder")
+                            .setParallelism(1);
+                    input = stateStream;
                 }
 
                 DataStream<String> output = input.map(item -> {
@@ -213,13 +193,15 @@ public class Dts2CanalJsonKafka {
                         subscribeTags = new HashMap<>();
                     }
                     if (canalJsonWrapperTags != null) {
-                        subscribeTags.put("kafkaSinkTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
-                        subscribeTags.put("sourceInTime", canalJsonWrapperTags.get("sourceInTime"));
-                        subscribeTags.put("dts2canalOutTime", canalJsonWrapperTags.get("dts2canalOutTime"));
-                        subscribeTags.put("partitionUpdateInTime", canalJsonWrapperTags.get("partitionUpdateInTime"));
-                        subscribeTags.put("stateRegisterTimerTime", canalJsonWrapperTags.get("stateRegisterTimerTime"));
-                        subscribeTags.put("stateMatchStateTime", canalJsonWrapperTags.get("stateMatchStateTime"));
-                        subscribeTags.put("stateOnTimerTime", canalJsonWrapperTags.get("stateOnTimerTime"));
+                        subscribeTags.put("kafkaSinkProcessTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
+                        subscribeTags.put("sourceInProcessTime", canalJsonWrapperTags.get("sourceInProcessTime"));
+                        subscribeTags.put("dts2canalOutProcessTime", canalJsonWrapperTags.get("dts2canalOutProcessTime"));
+                        subscribeTags.put("stateRegisterProcessTime", canalJsonWrapperTags.get("stateRegisterProcessTime"));
+                        subscribeTags.put("stateMatchedProcessTime", canalJsonWrapperTags.get("stateMatchedProcessTime"));
+                        subscribeTags.put("stateExpiredProcessTime", canalJsonWrapperTags.get("stateExpiredProcessTime"));
+                        subscribeTags.put("stateOnTimerProcessTime", canalJsonWrapperTags.get("stateOnTimerProcessTime"));
+                        subscribeTags.put("eventTime", canalJsonWrapperTags.get("eventTime"));
+                        subscribeTags.put("watermark", canalJsonWrapperTags.get("watermark"));
                     }
                     canalJsonTags.put("subscribe", subscribeTags);
                     canalJson.setTags(canalJsonTags);
@@ -264,7 +246,9 @@ public class Dts2CanalJsonKafka {
                         }
                         JSONObject jsonObject = JSONObject.parseObject(value);
                         String operationType = jsonObject.getString("type");
-                        if (operationType.equals("INSERT") || operationType.equals("UPDATE") || operationType.equals("DELETE") || operationType.equals("INSERT" + DrdsCdcProcessFunction.MERGE_SUFFIX) || operationType.equals("DELETE" + DrdsCdcProcessFunction.MERGE_SUFFIX) || operationType.equals("INSERT" + DrdsCdcProcessFunction.NOMATCH_DROP_SUFFIX) || operationType.equals("DELETE" + DrdsCdcProcessFunction.NOMATCH_DROP_SUFFIX)) {
+                        if (operationType.equals("INSERT") || operationType.equals("UPDATE") || operationType.equals("DELETE") ||
+                                operationType.equals("INSERT" + EnsureChronologicalOrderProcessFunction.MERGE_SUFFIX) || operationType.equals("DELETE" + EnsureChronologicalOrderProcessFunction.MERGE_SUFFIX)
+                                || operationType.equals("INSERT" + EnsureChronologicalOrderProcessFunction.HAS_EXPIRED_SUFFIX) || operationType.equals("DELETE" + EnsureChronologicalOrderProcessFunction.HAS_EXPIRED_SUFFIX)) {
                             return calculatePartition(jsonObject, partitions.length, prov);
                         } else {
                             return 0;
