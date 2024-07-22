@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -33,7 +34,7 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
     public static final String HAS_EXPIRED_SUFFIX = "_HAS_EXPIRED";
     public static final String TRANSACTION_ID = "transactionId";
     public static final String TRANSACTION_INDEX = "transactionIndex";
-    private transient MapState<String, HashMap<String, CanalJsonWrapper>> mapState;
+    private transient MapState<String, LinkedHashMap<String, CanalJsonWrapper>> mapState;
 
     private transient Counter addStateCount;
     private transient Counter firstAddStateCount;
@@ -48,6 +49,7 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
     private transient Counter againRegisterTimerCount;
     private transient Counter notMatchStateCount;
     private static Counter canalJsonWrapperValidateFailCount;
+    private transient Counter operationHaveExpiredCount;
 
     private long timerTimeInternalMs = TIME_INTERVAL_MS;
 
@@ -68,7 +70,7 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
     }
 
     private void registryState() {
-        MapStateDescriptor<String, HashMap<String, CanalJsonWrapper>> descriptor = new MapStateDescriptor<>("ensureChronologicalOrderState", TypeInformation.of(String.class), TypeInformation.of(new TypeHint<HashMap<String, CanalJsonWrapper>>() {
+        MapStateDescriptor<String, LinkedHashMap<String, CanalJsonWrapper>> descriptor = new MapStateDescriptor<>("ensureChronologicalOrderState", TypeInformation.of(String.class), TypeInformation.of(new TypeHint<LinkedHashMap<String, CanalJsonWrapper>>() {
         }));
         this.mapState = getRuntimeContext().getMapState(descriptor);
     }
@@ -92,6 +94,8 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
         this.notMatchStateCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.NOT_MATCH_STATE_COUNT);
 
         canalJsonWrapperValidateFailCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.DRDS_CANAL_JSON_WRAPPER_VALIDATE_FAIL_COUNT);
+        this.operationHaveExpiredCount = getRuntimeContext().getMetricGroup().counter(CdcMetricNames.OPERATION_HAVE_EXPIRED_COUNT);
+
     }
 
     @Override
@@ -122,7 +126,7 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
                     againAddStateCount.inc();
                 }
             } else {
-                HashMap<String, CanalJsonWrapper> store = new HashMap<>();
+                LinkedHashMap<String, CanalJsonWrapper> store = new LinkedHashMap<>();
                 mapState.put(stateKey, store);
                 handleElementStoreStateItem(context, stateKey, in);
                 context.timerService().registerEventTimeTimer(generateRegisterTimer(context));
@@ -147,7 +151,7 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
         if (store == null) {
             LOG.warn("stateKey:{},stateValue:{}", stateKey, store);
         }
-        HashMap<String, CanalJsonWrapper> storeAfter = new HashMap<>();
+        LinkedHashMap<String, CanalJsonWrapper> storeAfter = new LinkedHashMap<>();
         long minEventTimer = Long.MAX_VALUE;
         for (Map.Entry<String, CanalJsonWrapper> item : store.entrySet()) {
             String itemKey = item.getKey();
@@ -305,11 +309,9 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
                 if (store.getCanalJson().getEs().longValue() > Long.valueOf(esExpired).longValue()) {
                     return false;
                 }
-
                 if (store.getCanalJson().getEs().longValue() < Long.valueOf(esExpired).longValue()) {
                     return true;
                 }
-
                 Map<String, Long> topicMap = JSON.parseObject(idExpired, Map.class);
                 String topic = store.getTags().get("dtsTopic");
                 if (topicMap.containsKey(topic)) {
@@ -342,19 +344,25 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
     }
 
     private void handleElementUpdateStateItemExpired(String stateKey, CanalJsonWrapper in) throws Exception {
-        HashMap<String, CanalJsonWrapper> store = mapState.get(stateKey);
+        LinkedHashMap<String, CanalJsonWrapper> store = mapState.get(stateKey);
         for (Map.Entry<String, CanalJsonWrapper> item : store.entrySet()) {
             String key = item.getKey();
             CanalJsonWrapper storeValue = item.getValue();
 
-            String esExpired = String.valueOf(Math.max(in.getCanalJson().getEs(), Long.valueOf(storeValue.getTags().get("esExpired"))));
-            Map<String, String> storeTags = storeValue.getTags();
-            String idExpiredValue = generateTagsIdExpired(in);
-            storeTags.put("esExpired", esExpired);
-            storeTags.put("idExpired", idExpiredValue);
-            storeTags.put("stateExpiredProcessTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
-            storeValue.setTags(storeTags);
-            store.put(key, storeValue);
+            if (in.getCanalJson().getEs().longValue() >= Long.valueOf(storeValue.getTags().get("esExpired")).longValue()) {
+                String esExpired = String.valueOf(Math.max(in.getCanalJson().getEs(), Long.valueOf(storeValue.getTags().get("esExpired"))));
+                Map<String, String> storeTags = storeValue.getTags();
+                String idExpiredValue = generateTagsIdExpired(in);
+                storeTags.put("esExpired", esExpired);
+                storeTags.put("idExpired", idExpiredValue);
+                storeTags.put("stateExpiredProcessTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));
+                storeValue.setTags(storeTags);
+                store.put(key, storeValue);
+            } else {
+                String operationAfter = in.getOperation() + HAS_EXPIRED_SUFFIX;
+                updateCanalJsonWrapperOperation(in, operationAfter);
+                operationHaveExpiredCount.inc();
+            }
         }
         updateExpiredCount.inc();
         mapState.put(stateKey, store);
@@ -362,7 +370,7 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
 
     private void handleElementStoreStateItem(Context context, String stateKey, CanalJsonWrapper in) throws Exception {
         Map<String, String> inTags = in.getTags();
-        HashMap<String, CanalJsonWrapper> store = mapState.get(stateKey);
+        LinkedHashMap<String, CanalJsonWrapper> store = mapState.get(stateKey);
         String transactionId = inTags.get(TRANSACTION_ID);
         inTags.put("esExpired", "0");
         inTags.put("idExpired", "");
@@ -376,7 +384,7 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
 
     private void handleStateRemoveStateItem(Context context, CanalJsonWrapper store) throws Exception {
         String stateKey = context.getCurrentKey();
-        HashMap<String, CanalJsonWrapper> stateValue = mapState.get(stateKey);
+        LinkedHashMap<String, CanalJsonWrapper> stateValue = mapState.get(stateKey);
         stateValue.remove(store.getTags().get(TRANSACTION_ID));
         long storeRegisterTimer = Long.valueOf(store.getTags().get("registerTimer"));
         context.timerService().deleteEventTimeTimer(storeRegisterTimer);

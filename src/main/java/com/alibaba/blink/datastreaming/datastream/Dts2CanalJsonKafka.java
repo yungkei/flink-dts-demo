@@ -255,6 +255,7 @@ public class Dts2CanalJsonKafka {
                         }
                     }
                 }));
+                kafkaProducer.setWriteTimestampToKafka(true);
 
                 output.addSink(kafkaProducer).name("Kafka").setParallelism(sinkParallelism);
 

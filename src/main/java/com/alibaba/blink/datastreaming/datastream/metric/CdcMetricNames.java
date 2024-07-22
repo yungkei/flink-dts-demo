@@ -41,6 +41,7 @@ public class CdcMetricNames {
     public static final String MERGE_INTO_UPDATE = "mergeIntoUpdateCount";
     public static final String NOT_MATCH_STATE_COUNT = "notMatchStateCount";
     public static final String DRDS_CANAL_JSON_WRAPPER_VALIDATE_FAIL_COUNT = "drdsCanalJsonWrapperValidateFailCount";
+    public static final String OPERATION_HAVE_EXPIRED_COUNT = "operationHaveExpiredCount";
 
     public static long maxGaugeValue(long maxGaugeValue, long currentGaugeValue) {
         long value = maxGaugeValue;
