@@ -117,6 +117,10 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
                             handleElementMergeStateItemHasNoExpired(context, out, in, match);
                         }
                         handleStateRemoveStateItem(context, match);
+                        if (mapState.contains(stateKey) && mapState.get(stateKey).size() > 0) {
+                            CanalJsonWrapper canalJsonWrapperInsert = "INSERT".equalsIgnoreCase(in.getOperation()) ? in : match;
+                            handleElementUpdateStateItemExpired(stateKey, canalJsonWrapperInsert);
+                        }
                     } else {
                         notMatchStateCount.inc();
                         out.collect(in);
@@ -323,21 +327,21 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
         }
     }
 
-    private String generateTagsIdExpired(CanalJsonWrapper canalJsonWrapper) {
-        String idExpired = canalJsonWrapper.getTags().get("idExpired");
-        String topic = canalJsonWrapper.getTags().get("dtsTopic");
-        Long opId = canalJsonWrapper.getCanalJson().getId();
+    private String generateTagsIdExpired(CanalJsonWrapper store, CanalJsonWrapper in) {
+        String idExpired = store.getTags().get("idExpired");
+        String inTopic = in.getTags().get("dtsTopic");
+        Long inOpId = in.getCanalJson().getId();
         if (StringUtils.isBlank(idExpired)) {
             Map<String, Long> topicMap = new HashMap<>();
-            topicMap.put(topic, opId);
+            topicMap.put(inTopic, inOpId);
             return JSON.toJSONString(topicMap);
         } else {
             Map<String, Long> topicMap = JSON.parseObject(idExpired, Map.class);
-            if (topicMap.containsKey(topic)) {
-                long maxOpId = Math.max(opId, topicMap.get(topic).longValue());
-                topicMap.put(topic, maxOpId);
+            if (topicMap.containsKey(inTopic)) {
+                long maxOpId = Math.max(inOpId.longValue(), topicMap.get(inTopic).longValue());
+                topicMap.put(inTopic, maxOpId);
             } else {
-                topicMap.put(topic, opId);
+                topicMap.put(inTopic, inOpId);
             }
             return JSON.toJSONString(topicMap);
         }
@@ -352,7 +356,7 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
             if (in.getCanalJson().getEs().longValue() >= Long.valueOf(storeValue.getTags().get("esExpired")).longValue()) {
                 String esExpired = String.valueOf(Math.max(in.getCanalJson().getEs(), Long.valueOf(storeValue.getTags().get("esExpired"))));
                 Map<String, String> storeTags = storeValue.getTags();
-                String idExpiredValue = generateTagsIdExpired(in);
+                String idExpiredValue = generateTagsIdExpired(storeValue, in);
                 storeTags.put("esExpired", esExpired);
                 storeTags.put("idExpired", idExpiredValue);
                 storeTags.put("stateExpiredProcessTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(System.currentTimeMillis()));

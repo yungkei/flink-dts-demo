@@ -60,6 +60,8 @@ public class Dts2CanalJsonKafka {
                 String dtsUser = this.sourceConfig.get("user");
                 String dtsPassword = this.sourceConfig.get("password");
                 String dtsStartupOffsetsTimestamp = this.sourceConfig.get("startupOffsetsTimestamp");
+                Properties dtsExtraProperties = new Properties();
+                dtsExtraProperties.setProperty("auto.offset.reset", "latest");
 
                 LOG.info("dts.broker-url:{}", dtsBrokerUrl);
                 LOG.info("dts.topic:{}", dtsTopic);
@@ -123,7 +125,8 @@ public class Dts2CanalJsonKafka {
                 String dtsGroup0 = sourceConfig0.get("group");
                 String dtsUser0 = sourceConfig0.get("user");
                 String dtsPassword0 = sourceConfig0.get("password");
-                String dtsStartupOffsetsTimestamp0 = sourceConfig0.get("startupOffsetsTimestamp");
+                String dtsStartupOffsetsTimestamp0Str = sourceConfig0.get("startupOffsetsTimestamp");
+                Long dtsStartupOffsetsTimestamp0 = StringUtils.isNotBlank(dtsStartupOffsetsTimestamp0Str) ? Long.valueOf(dtsStartupOffsetsTimestamp0Str) : 0L;
                 LOG.info("Dts{}-config:{}", dtsName0, sourceConfig0);
 
                 Dts2CanalProcessFunction dts2CanalProcessFunction0 = new Dts2CanalProcessFunction();
@@ -135,7 +138,7 @@ public class Dts2CanalJsonKafka {
                 dts2CanalProcessFunction0.setEnableDdl(enableDdl);
                 dts2CanalProcessFunction0.setMapToString(mapToString);
                 dts2CanalProcessFunction0.setDtsTopic(dtsTopic0);
-                DataStream<CanalJsonWrapper> input = env.addSource(new FlinkDtsRawConsumer(dtsBrokerUrl0, dtsTopic0, dtsSid0, dtsGroup0, dtsUser0, dtsPassword0, Long.parseLong(dtsStartupOffsetsTimestamp0), new DtsByteDeserializationSchema(), null).assignTimestampsAndWatermarks(new DtsAssignerWithPeriodicWatermarks(Duration.ofSeconds(0)))).setParallelism(1).name(dtsName0).process(dts2CanalProcessFunction0).name(dtsName0 + "ToCanal").setParallelism(mapParallelism);
+                DataStream<CanalJsonWrapper> input = env.addSource(new FlinkDtsRawConsumer(dtsBrokerUrl0, dtsTopic0, dtsSid0, dtsGroup0, dtsUser0, dtsPassword0, dtsStartupOffsetsTimestamp0, new DtsByteDeserializationSchema(), dtsExtraProperties).assignTimestampsAndWatermarks(new DtsAssignerWithPeriodicWatermarks(Duration.ofSeconds(0)))).setParallelism(1).name(dtsName0).process(dts2CanalProcessFunction0).name(dtsName0 + "ToCanal").setParallelism(mapParallelism);
                 for (int i = 1; i < dynamicSourceConfig.size(); i++) {
                     HashMap<String, String> sourceConfigN = dynamicSourceConfig.get(i);
                     String dtsNameN = sourceConfigN.get("name");
@@ -145,7 +148,8 @@ public class Dts2CanalJsonKafka {
                     String dtsGroupN = sourceConfigN.get("group");
                     String dtsUserN = sourceConfigN.get("user");
                     String dtsPasswordN = sourceConfigN.get("password");
-                    String dtsStartupOffsetsTimestampN = sourceConfigN.get("startupOffsetsTimestamp");
+                    String dtsStartupOffsetsTimestampNStr = sourceConfigN.get("startupOffsetsTimestamp");
+                    Long dtsStartupOffsetsTimestampN = StringUtils.isNotBlank(dtsStartupOffsetsTimestampNStr) ? Long.valueOf(dtsStartupOffsetsTimestampNStr) : 0L;
                     LOG.info("Dts{}-config:{}", dtsNameN, sourceConfigN);
                     Dts2CanalProcessFunction dts2CanalProcessFunctionN = new Dts2CanalProcessFunction();
                     dts2CanalProcessFunctionN.setRouteDefs(routeDefs);
@@ -156,7 +160,7 @@ public class Dts2CanalJsonKafka {
                     dts2CanalProcessFunctionN.setEnableDdl(enableDdl);
                     dts2CanalProcessFunctionN.setMapToString(mapToString);
                     dts2CanalProcessFunctionN.setDtsTopic(dtsTopicN);
-                    input = input.union(env.addSource(new FlinkDtsRawConsumer(dtsBrokerUrlN, dtsTopicN, dtsSidN, dtsGroupN, dtsUserN, dtsPasswordN, Long.parseLong(dtsStartupOffsetsTimestampN), new DtsByteDeserializationSchema(), null).assignTimestampsAndWatermarks(new DtsAssignerWithPeriodicWatermarks(Duration.ofSeconds(0)))).setParallelism(1).name(dtsNameN).process(dts2CanalProcessFunctionN).name(dtsNameN + "ToCanal").setParallelism(mapParallelism));
+                    input = input.union(env.addSource(new FlinkDtsRawConsumer(dtsBrokerUrlN, dtsTopicN, dtsSidN, dtsGroupN, dtsUserN, dtsPasswordN, dtsStartupOffsetsTimestampN, new DtsByteDeserializationSchema(), dtsExtraProperties).assignTimestampsAndWatermarks(new DtsAssignerWithPeriodicWatermarks(Duration.ofSeconds(0)))).setParallelism(1).name(dtsNameN).process(dts2CanalProcessFunctionN).name(dtsNameN + "ToCanal").setParallelism(mapParallelism));
                 }
 
                 if ("true".equalsIgnoreCase(enablePartitionUpdatePerform)) {
