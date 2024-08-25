@@ -15,11 +15,13 @@ import java.util.stream.Collectors;
 public abstract class AbstractFlinkAction {
     private static final Logger LOG = LoggerFactory.getLogger(AbstractFlinkAction.class);
 
+    protected HashMap<String, String> globalConfig;
     protected HashMap<String, String> sourceConfig;
     protected List<HashMap<String, String>> dynamicSourceConfig;
     protected HashMap<String, String> sinkConfig;
     protected List<RouteDef> routeConfig;
     protected String jobName;
+    private static final String GLOBAL = "global-config";
     private static final String ROUTE = "route";
     private static final String ROUTE_SOURCE_DATABASE_KEY = "source-database";
     private static final String ROUTE_TARGET_DATABASE_KEY = "target-database";
@@ -37,12 +39,17 @@ public abstract class AbstractFlinkAction {
     protected abstract String getSinkIdentifier();
 
     public void create(String[] args) {
+        setGlobalConfig(args);
         setSourceConfig(args, getSourceIdentifier());
         setSinkConfig(args, getSinkIdentifier());
         setRouteConfig(args);
         setExtraConfig(args);
         setJobName(args);
         setDynamicSourceConfig(args, getSourceIdentifier());
+    }
+
+    void setGlobalConfig(String[] args) {
+        this.globalConfig = optionalConfigMap(args, GLOBAL);
     }
 
     abstract void setExtraConfig(String[] args);

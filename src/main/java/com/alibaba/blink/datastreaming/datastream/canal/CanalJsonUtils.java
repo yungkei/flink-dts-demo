@@ -30,7 +30,7 @@ public class CanalJsonUtils {
     private static final String SYSTEM_LOGICAL_DB_KEY = "SYSTEM_LOGICAL_DB";
     private static final String SYSTEM_LOGICAL_TABLE_KEY = "SYSTEM_LOGICAL_TABLE";
     private static final String SYSTEM_OP_TS_KEY = "SYSTEM_OP_TS";
-    private static final String SYSTEM_OP_TRACEID_KEY = "SYSTEM_OP_TRACEID";
+    private static final String SYSTEM_OP_ID_KEY = "SYSTEM_OP_ID";
     private static final String PROV_KEY = "prov";
     private static final String PROV_KEY_UPPER = "PROV";
 
@@ -80,10 +80,14 @@ public class CanalJsonUtils {
     }
 
     public static CanalJson convert(JSONObject dtsJsonObject) {
-        return convert(dtsJsonObject, null, null, null, null);
+        return convert(dtsJsonObject, null, null, null, null, true);
     }
 
     public static CanalJson convert(JSONObject dtsJsonObject, List<RouteDef> routeDefs, HashMap<String, String> extraColumns, String extraPrimaryKeys, String mapToString) {
+        return convert(dtsJsonObject, routeDefs, extraColumns, extraPrimaryKeys, mapToString, true);
+    }
+
+    public static CanalJson convert(JSONObject dtsJsonObject, List<RouteDef> routeDefs, HashMap<String, String> extraColumns, String extraPrimaryKeys, String mapToString, boolean casSensitive) {
         CanalJson canalJson = new CanalJson();
         canalJson.setType(dtsJsonObject.getString("operation")); // 假定 operation 字段即代表了 DTS 操作类型 UPDATE, INSERT 等
         canalJson.setId(dtsJsonObject.getLong("id"));
@@ -147,7 +151,7 @@ public class CanalJsonUtils {
             if (systemOpTs != null) {
                 extraFieldMap.put(SYSTEM_OP_TS_KEY, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Timestamp(Long.valueOf(systemOpTs) * 1000L)));
             }
-            extraFieldMap.put(SYSTEM_OP_TRACEID_KEY, dtsJsonObject.getString("id"));
+            extraFieldMap.put(SYSTEM_OP_ID_KEY, dtsJsonObject.getString("id"));
 
             String[] sourceTableArray = dtsObjectName.split("\\.");
             if (sourceTableArray.length == 1) {
@@ -172,13 +176,13 @@ public class CanalJsonUtils {
 
             // 需要一个键值对列表来表示之前的图像和之后的图像。
             List<Map<String, String>> oldList = new ArrayList<>();
-            oldList.add(convertFieldMap(dtsJsonObject.getJSONObject("beforeImages"), extraFieldMap));
+            oldList.add(convertFieldMap(dtsJsonObject.getJSONObject("beforeImages"), extraFieldMap, casSensitive));
             if (!"DELETE".equals(canalJson.getType())) {
                 canalJson.setOld(oldList);
             }
 
             List<Map<String, String>> dataList = new ArrayList<>();
-            dataList.add(convertFieldMap(dtsJsonObject.getJSONObject("afterImages"), extraFieldMap));
+            dataList.add(convertFieldMap(dtsJsonObject.getJSONObject("afterImages"), extraFieldMap, casSensitive));
             canalJson.setData(dataList);
             if ("DELETE".equals(canalJson.getType())) {
                 canalJson.setData(oldList);
@@ -206,7 +210,7 @@ public class CanalJsonUtils {
                 put(DTS_FIELDS_DATA_TYPE_NUMBER_KEY, 7);
             }});
             dtsJsonFields.add(new JSONObject() {{
-                put(DTS_FIELDS_NAME_KEY, SYSTEM_OP_TRACEID_KEY);
+                put(DTS_FIELDS_NAME_KEY, SYSTEM_OP_ID_KEY);
                 put(DTS_FIELDS_DATA_TYPE_NUMBER_KEY, 254);
             }});
             dtsJsonFields.add(new JSONObject() {{
@@ -215,9 +219,9 @@ public class CanalJsonUtils {
             }});
 
             // 字段类型和字段 SQL 类型映射
-            Map<String, Integer> sqlTypeMap = dtsJsonFields.stream().collect(Collectors.toMap(fieldObj -> ((JSONObject) fieldObj).getString("name"), fieldObj -> ((JSONObject) fieldObj).getInteger("dataTypeNumber")));
+            Map<String, Integer> sqlTypeMap = dtsJsonFields.stream().collect(Collectors.toMap(fieldObj -> caseSensitiveParse(((JSONObject) fieldObj).getString("name"), casSensitive), fieldObj -> ((JSONObject) fieldObj).getInteger("dataTypeNumber")));
             canalJson.setSqlType(sqlTypeMap);
-            Map<String, String> mysqlType = convertToTypeNameMap(sqlTypeMap, mapToString);
+            Map<String, String> mysqlType = convertToTypeNameMap(sqlTypeMap, mapToString, casSensitive);
             canalJson.setMysqlType(mysqlType);
 
             // 其他字段根据实际情况进行填充
@@ -232,13 +236,14 @@ public class CanalJsonUtils {
                 JSONObject pkInfo = JSON.parseObject(tags.getString("pk_uk_info"));
                 if (pkInfo != null && pkInfo.containsKey("PRIMARY")) {
                     List<String> pkNames = pkInfo.getJSONArray("PRIMARY").toJavaList(String.class);
+                    Set<String> extraPkNames = pkNames.stream().map(item -> caseSensitiveParse(item, casSensitive)).collect(Collectors.toSet());
                     if (StringUtils.isNotBlank(extraPrimaryKeys)) {
                         String[] extraPrimaryKeyArray = extraPrimaryKeys.split(",");
                         for (int ei = 0; ei < extraPrimaryKeyArray.length; ei++) {
-                            pkNames.add(extraPrimaryKeyArray[ei]);
+                            extraPkNames.add(caseSensitiveParse(extraPrimaryKeyArray[ei], casSensitive));
                         }
                     }
-                    canalJson.setPkNames(pkNames);
+                    canalJson.setPkNames(new ArrayList<>(extraPkNames));
                 }
             }
             setCanalTags(canalJson, dtsJsonObject);
@@ -274,33 +279,33 @@ public class CanalJsonUtils {
         canalJson.setTags(canalTags);
     }
 
-    public static Map<String, String> convertToTypeNameMap(Map<String, Integer> sqlTypeMap, String mapToString) {
+    public static Map<String, String> convertToTypeNameMap(Map<String, Integer> sqlTypeMap, String mapToString, boolean caseSensitive) {
         Map<String, String> sqlTypeNameMap = new HashMap<>();
         for (Map.Entry<String, Integer> entry : sqlTypeMap.entrySet()) {
             String fieldName = entry.getKey();
             Integer typeNumber = entry.getValue();
             String typeName = "true".equalsIgnoreCase(mapToString) ? "VARCHAR" : typeMap.getOrDefault(typeNumber, "VARCHAR");
-            sqlTypeNameMap.put(fieldName, typeName);
+            sqlTypeNameMap.put(caseSensitiveParse(fieldName, caseSensitive), typeName);
         }
         return sqlTypeNameMap;
     }
 
     public static Map<String, String> convertToTypeNameMap(Map<String, Integer> sqlTypeMap) {
-        return convertToTypeNameMap(sqlTypeMap, null);
+        return convertToTypeNameMap(sqlTypeMap, null, true);
     }
 
-    private static Map<String, String> convertFieldMap(JSONObject fieldJson, HashMap<String, String> extraFieldMap) {
+    private static Map<String, String> convertFieldMap(JSONObject fieldJson, HashMap<String, String> extraFieldMap, boolean caseSensitive) {
         if (fieldJson == null) {
             return null;
         }
         Map<String, String> fieldMap = new HashMap<>();
         for (String key : fieldJson.keySet()) {
-            fieldMap.put(key, fieldJson.getString(key));
+            fieldMap.put(caseSensitiveParse(key, caseSensitive), fieldJson.getString(key));
         }
 
         if (extraFieldMap != null && !extraFieldMap.isEmpty()) {
             extraFieldMap.forEach((key, value) -> {
-                fieldMap.put(key, value);
+                fieldMap.put(caseSensitiveParse(key, caseSensitive), value);
             });
         }
 
@@ -308,7 +313,14 @@ public class CanalJsonUtils {
     }
 
     private static Map<String, String> convertFieldMap(JSONObject fieldJson) {
-        return convertFieldMap(fieldJson, null);
+        return convertFieldMap(fieldJson, null, true);
+    }
+
+    private static String caseSensitiveParse(String value, boolean caseSensitive) {
+        if (caseSensitive) {
+            return value;
+        }
+        return value.toLowerCase();
     }
 
     public static String performDtsObjectName(String source, String preTarget) {

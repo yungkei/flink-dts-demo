@@ -52,6 +52,7 @@ public class Dts2CanalJsonKafka {
                 long partitionUpdatePerformsTimerTimeInternalMs = this.partitionUpdatePerformsTimerTimeInternalMs;
                 int memoryStateMaxSize = this.memoryStateMaxSize;
                 String mapToString = this.mapToString;
+                boolean casSensitive = Boolean.valueOf(this.globalConfig.getOrDefault("cas-sensitive", "true"));
 
                 String dtsBrokerUrl = this.sourceConfig.get("broker-url");
                 String dtsTopic = this.sourceConfig.get("topic");
@@ -81,6 +82,7 @@ public class Dts2CanalJsonKafka {
                 LOG.info("partitionUpdatePerformsTimerTimeInternalMs:{}", partitionUpdatePerformsTimerTimeInternalMs);
                 LOG.info("memoryStateMaxSize:{}", memoryStateMaxSize);
                 LOG.info("mapToString:{}", mapToString);
+                LOG.info("casSensitive:{}", casSensitive);
 
                 Properties sinkProperties = new Properties();
                 String kafkaBootstrapServers = this.sinkConfig.getOrDefault("bootstrap.servers", "");
@@ -138,6 +140,7 @@ public class Dts2CanalJsonKafka {
                 dts2CanalProcessFunction0.setEnableDdl(enableDdl);
                 dts2CanalProcessFunction0.setMapToString(mapToString);
                 dts2CanalProcessFunction0.setDtsTopic(dtsTopic0);
+                dts2CanalProcessFunction0.setCasSensitive(casSensitive);
                 DataStream<CanalJsonWrapper> input = env.addSource(new FlinkDtsRawConsumer(dtsBrokerUrl0, dtsTopic0, dtsSid0, dtsGroup0, dtsUser0, dtsPassword0, dtsStartupOffsetsTimestamp0, new DtsByteDeserializationSchema(), dtsExtraProperties).assignTimestampsAndWatermarks(new DtsAssignerWithPeriodicWatermarks(Duration.ofSeconds(0)))).setParallelism(1).name(dtsName0).process(dts2CanalProcessFunction0).name(dtsName0 + "ToCanal").setParallelism(mapParallelism);
                 for (int i = 1; i < dynamicSourceConfig.size(); i++) {
                     HashMap<String, String> sourceConfigN = dynamicSourceConfig.get(i);
@@ -160,6 +163,7 @@ public class Dts2CanalJsonKafka {
                     dts2CanalProcessFunctionN.setEnableDdl(enableDdl);
                     dts2CanalProcessFunctionN.setMapToString(mapToString);
                     dts2CanalProcessFunctionN.setDtsTopic(dtsTopicN);
+                    dts2CanalProcessFunctionN.setCasSensitive(casSensitive);
                     input = input.union(env.addSource(new FlinkDtsRawConsumer(dtsBrokerUrlN, dtsTopicN, dtsSidN, dtsGroupN, dtsUserN, dtsPasswordN, dtsStartupOffsetsTimestampN, new DtsByteDeserializationSchema(), dtsExtraProperties).assignTimestampsAndWatermarks(new DtsAssignerWithPeriodicWatermarks(Duration.ofSeconds(0)))).setParallelism(1).name(dtsNameN).process(dts2CanalProcessFunctionN).name(dtsNameN + "ToCanal").setParallelism(mapParallelism));
                 }
 

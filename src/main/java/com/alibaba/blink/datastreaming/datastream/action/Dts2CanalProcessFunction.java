@@ -62,6 +62,7 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
     private String mapToString;
     private String enableDdl;
     private String dtsTopic;
+    private boolean casSensitive;
 
     public void setRouteDefs(List<RouteDef> routeDefs) {
         this.routeDefs = routeDefs;
@@ -93,6 +94,10 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
 
     public void setDtsTopic(String dtsTopic) {
         this.dtsTopic = dtsTopic;
+    }
+
+    public void setCasSensitive(boolean casSensitive) {
+        this.casSensitive = casSensitive;
     }
 
     @Override
@@ -306,7 +311,7 @@ public class Dts2CanalProcessFunction extends ProcessFunction<ByteRecord, CanalJ
                 LOG.debug("Source table '{}' is included.", dtsObjectName);
                 LOG.debug("dtsJson:{}", dtsJson);
                 try {
-                    CanalJson canalJson = CanalJsonUtils.convert(dtsJson, routeDefs, extraColumns, extraPrimaryKeys, mapToString);
+                    CanalJson canalJson = CanalJsonUtils.convert(dtsJson, routeDefs, extraColumns, extraPrimaryKeys, mapToString, casSensitive);
                     if (canalJson == null) {
                         return;
                     }

@@ -304,6 +304,10 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
             return false;
         }
         if (store.getTags().get("dtsTopic").equalsIgnoreCase(in.getTags().get("dtsTopic"))) {
+            String esExpired = store.getTags().get("esExpired");
+            if (store.getCanalJson().getEs().longValue() <= Long.valueOf(esExpired).longValue()) {
+                return true;
+            }
             return false;
         } else {
             if ("DELETE".equalsIgnoreCase(store.getOperation())) {
