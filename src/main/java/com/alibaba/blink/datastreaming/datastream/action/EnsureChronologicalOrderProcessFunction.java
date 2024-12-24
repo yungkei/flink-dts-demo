@@ -4,6 +4,7 @@ import com.alibaba.blink.datastreaming.datastream.canal.CanalJson;
 import com.alibaba.blink.datastreaming.datastream.canal.CanalJsonWrapper;
 import com.alibaba.blink.datastreaming.datastream.metric.CdcMetricNames;
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.TypeReference;
 import com.google.common.hash.Hashing;
 import org.apache.commons.beanutils.BeanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -207,7 +208,7 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
         Map<String, String> tags = canalJsonWrapper.getTags();
         String traceType = tags.get(TRANSACTION_INDEX);
         String operation = canalJsonWrapper.getOperation();
-        return ("insert".equalsIgnoreCase(operation) && ("3".equals(traceType) || "2".equalsIgnoreCase(traceType)) || ("delete".equalsIgnoreCase(operation) && ("1".equals(traceType) || "2".equals(traceType))));
+        return ("insert".equalsIgnoreCase(operation) && ("3".equals(traceType) || "2".equals(traceType) || "4".equals(traceType)) || ("delete".equalsIgnoreCase(operation) && ("1".equals(traceType) || "2".equals(traceType))));
     }
 
     public static boolean validateCanalJsonWrapper(CanalJsonWrapper canalJsonWrapper) {
@@ -320,7 +321,8 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
                 if (store.getCanalJson().getEs().longValue() < Long.valueOf(esExpired).longValue()) {
                     return true;
                 }
-                Map<String, Long> topicMap = JSON.parseObject(idExpired, Map.class);
+                Map<String, Long> topicMap = JSON.parseObject(idExpired, new TypeReference<Map<String, Long>>() {
+                });
                 String topic = store.getTags().get("dtsTopic");
                 if (topicMap.containsKey(topic)) {
                     return true;
@@ -340,7 +342,8 @@ public class EnsureChronologicalOrderProcessFunction extends KeyedProcessFunctio
             topicMap.put(inTopic, inOpId);
             return JSON.toJSONString(topicMap);
         } else {
-            Map<String, Long> topicMap = JSON.parseObject(idExpired, Map.class);
+            Map<String, Long> topicMap = JSON.parseObject(idExpired, new TypeReference<Map<String, Long>>() {
+            });
             if (topicMap.containsKey(inTopic)) {
                 long maxOpId = Math.max(inOpId.longValue(), topicMap.get(inTopic).longValue());
                 topicMap.put(inTopic, maxOpId);

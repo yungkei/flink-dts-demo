@@ -95,7 +95,8 @@ public class CanalJsonUtils {
         List<FlatRouteDef> flatRouteDefs = AbstractDtsToKafkaFlinkAction.flatRouteDefs(routeDefs);
 
         // 将数据库和表名分割
-        String dtsObjectName = dtsJsonObject.getString("objectName");
+        String dtsObjectNameCaseSensitive = dtsJsonObject.getString("objectName");
+        String dtsObjectName = caseSensitiveParse(dtsObjectNameCaseSensitive, casSensitive);
         String dtsObjectNamePerformedPre = AbstractDtsToKafkaFlinkAction.convertTableNameIfMatched(flatRouteDefs, dtsObjectName);
         String dtsObjectNamePerformed = performDtsObjectName(dtsObjectName, dtsObjectNamePerformedPre);
         String[] dbTableArray = dtsObjectNamePerformed.split("\\.");
@@ -220,7 +221,7 @@ public class CanalJsonUtils {
 
             // 字段类型和字段 SQL 类型映射
             Map<String, Integer> sqlTypeMap = dtsJsonFields.stream().collect(Collectors.toMap(fieldObj -> caseSensitiveParse(((JSONObject) fieldObj).getString("name"), casSensitive), fieldObj -> ((JSONObject) fieldObj).getInteger("dataTypeNumber")));
-            canalJson.setSqlType(sqlTypeMap);
+//            canalJson.setSqlType(sqlTypeMap);
             Map<String, String> mysqlType = convertToTypeNameMap(sqlTypeMap, mapToString, casSensitive);
             canalJson.setMysqlType(mysqlType);
 

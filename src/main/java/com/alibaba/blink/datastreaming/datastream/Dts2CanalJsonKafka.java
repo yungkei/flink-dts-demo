@@ -94,6 +94,7 @@ public class Dts2CanalJsonKafka {
                 String kafkaSaslJaasConfig = this.sinkConfig.getOrDefault("sasl.jaas.config", "");
                 String kafkaBatchSize = this.sinkConfig.getOrDefault("batch.size", "");
                 String kafkaLingerMs = this.sinkConfig.getOrDefault("linger.ms", "");
+                String kafkaCompressionType = this.sinkConfig.getOrDefault("compression.type", "");
                 String kafkaBufferMemory = this.sinkConfig.getOrDefault("buffer.memory", "");
                 String kafkaRetries = this.sinkConfig.getOrDefault("retries", "");
                 String kafkaMaxInFlightRequestPerConnection = this.sinkConfig.getOrDefault("max.in.flight.requests.per.connection", "");
@@ -108,6 +109,7 @@ public class Dts2CanalJsonKafka {
                 LOG.info("kafka.sasl.jaas.config:{}", kafkaSaslJaasConfig);
                 LOG.info("kafka.batch.size:{}", kafkaBatchSize);
                 LOG.info("kafka.linger.ms:{}", kafkaLingerMs);
+                LOG.info("kafka.compression.type:{}", kafkaCompressionType);
                 LOG.info("kafka.buffer.memory:{}", kafkaBufferMemory);
                 LOG.info("kafka.partition:{}", kafkaPartition);
 
@@ -237,6 +239,9 @@ public class Dts2CanalJsonKafka {
                 if (StringUtils.isNotBlank(kafkaLingerMs)) {
                     sinkProperties.setProperty("linger.ms", kafkaLingerMs);
                 }
+                if (StringUtils.isNotBlank(kafkaCompressionType)) {
+                    sinkProperties.setProperty("compression.type", kafkaCompressionType);
+                }
                 if (StringUtils.isNotBlank(kafkaBufferMemory)) {
                     sinkProperties.setProperty("buffer.memory", kafkaBufferMemory);
                 }
@@ -256,14 +261,15 @@ public class Dts2CanalJsonKafka {
                         String operationType = jsonObject.getString("type");
                         if (operationType.equals("INSERT") || operationType.equals("UPDATE") || operationType.equals("DELETE") ||
                                 operationType.equals("INSERT" + EnsureChronologicalOrderProcessFunction.MERGE_SUFFIX) || operationType.equals("DELETE" + EnsureChronologicalOrderProcessFunction.MERGE_SUFFIX)
-                                || operationType.equals("INSERT" + EnsureChronologicalOrderProcessFunction.HAS_EXPIRED_SUFFIX) || operationType.equals("DELETE" + EnsureChronologicalOrderProcessFunction.HAS_EXPIRED_SUFFIX)) {
+                                || operationType.equals("INSERT" + EnsureChronologicalOrderProcessFunction.HAS_EXPIRED_SUFFIX) || operationType.equals("DELETE" + EnsureChronologicalOrderProcessFunction.HAS_EXPIRED_SUFFIX)
+                                || operationType.equals("UPDATE" + EnsureChronologicalOrderProcessFunction.HAS_EXPIRED_SUFFIX)) {
                             return calculatePartition(jsonObject, partitions.length, prov);
                         } else {
                             return 0;
                         }
                     }
                 }));
-                kafkaProducer.setWriteTimestampToKafka(true);
+//                kafkaProducer.setWriteTimestampToKafka(true);
 
                 output.addSink(kafkaProducer).name("Kafka").setParallelism(sinkParallelism);
 
